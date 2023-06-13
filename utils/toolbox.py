@@ -294,7 +294,8 @@ class tc_track:
                 mask = np.vstack([mask,
                                   temp_mask])
         
-        data_steps = data_steps*mask
+        
+        data_steps = data_steps.where(mask)
         
         attr_name = f'{data.name}_res{resolution}_rad{radius}'
         

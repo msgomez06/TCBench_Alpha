@@ -14,12 +14,112 @@ used in other scripts to perform the tasks associated with TCBench
 import os
 import pandas as pd
 import numpy as np
+import xarray as xr
 import constants
 
 # Retrieve Repository Path
 repo_path = '/'+os.path.join(*os.getcwd().split('/')[:-1])
 
 print(repo_path)
+
+#%% Auxilliary Functions
+
+# Lat-lon grid generator
+def ll_gridder(origin = (0,0),
+               resolution = 0.25,
+               lon_mode = 360,
+               lat_limits = None,
+               lon_limits = None,
+               use_poles = True):
+    """
+    ll_gridder is a lat-lon grid generator that's useful for generator the
+    data masks associated with the     
+    
+    Parameters
+    ----------
+    origin : TYPE, optional
+        DESCRIPTION. The default is (0,0).
+    resolution : TYPE, optional
+        DESCRIPTION. The default is 0.25.
+    lon_mode : TYPE, optional
+        DESCRIPTION. The default is 'pos'.
+     : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    None.
+
+    """
+    assert type(use_poles) is bool, f'Unexpected type for use_poles:{type(use_poles)}. Expected boolean.'
+    assert lon_mode == 180 or lon_mode == 360, f'Invalid long mode in ll_gridder: {lon_mode}. Expected 180 or 360 as ints'
+    
+    if lat_limits is not None:
+        assert origin[0] >= lat_limits[0], 'Origin lower limit less than origin value'
+        assert origin[0] <= lat_limits[1], 'Origin lower limit less than origin value'
+    else:
+        lat_limits = (-90,90)
+    
+    if lon_limits is not None:
+        assert origin[1] >= lon_limits[0], 'Origin lower limit less than origin value'
+        assert origin[1] <= lon_limits[1], 'Origin lower limit less than origin value'    
+    else:
+        lon_limits = (0,360) if lon_mode == 360 else (-180,180)
+    
+    lat_vector = np.hstack([ np.flip(np.arange(origin[0], lat_limits[0] - resolution*use_poles, -resolution)),
+                             np.arange(origin[0], lat_limits[1] + resolution*use_poles, resolution),])
+    
+    if lon_mode == 360:
+        lon_vector = np.hstack([ np.flip(np.arange(origin[1], lon_limits[0] - resolution, -resolution)),
+                                 np.arange(origin[1], lon_limits[1], resolution),])
+        
+    else:
+        lon_vector = np.hstack([ np.flip(np.arange(origin[1], lon_limits[0], -resolution)),
+                                 np.arange(origin[1], lon_limits[1]+resolution, resolution),])
+    
+    # Sanitize outputs
+    lat_vector = np.unique(lat_vector)
+    lon_vector = np.unique(lon_vector)
+    
+    lats, lons = np.meshgrid(lat_vector, lon_vector)
+    
+    return lats, lons
+
+    
+
+# Great circle distance calculations
+def haversine(latp, lonp, lat_list, lon_list):
+    """──────────────────────────────────────────────────────────────────────────┐
+      Haversine formula for calculating distance between target point (latp, 
+      lonp) and series of points (lat_list, lon_list). This function can handle 
+      2D lat/lon lists, but has been used with flattened data
+      
+      Based on:
+      https://medium.com/@petehouston/calculate-distance-of-two-locations-on-earth-using-python-1501b1944d97
+      
+      
+      Inputs:
+          latp - latitude of target point
+          
+          lonp - longitude of target point
+          
+          lat_list - list of latitudess (lat_p-1, lat_p-2 ... lon_p-n)
+      
+          lon_list - list of longitudess (lon_p-1, lon_p-2 ... lon_p-n)
+      
+      Outputs:
+      
+    └──────────────────────────────────────────────────────────────────────────"""
+    latp = np.radians(latp)
+    lonp = np.radians(lonp)
+    lat_list = np.radians(lat_list)
+    lon_list = np.radians(lon_list)
+    
+    dlon = lonp - lon_list
+    dlat = latp - lat_list
+    a = np.power(np.sin(dlat / 2),2) + np.cos(lat_list) * np.cos(latp) * np.power(np.sin(dlon / 2), 2)
+    return 2 * 6371 * np.arcsin(np.sqrt(a))
+
 #%% Data Processing / Preprocessing Library
 """
 This cell contains the following classes and functions:
@@ -135,10 +235,11 @@ class tc_track:
                  UID,
                  NAME,
                  track,
-                 timestamps):
+                 timestamps,
+                 ):
         assert type(UID) == str, f'Unique Identifier Error. {type(UID)} given when string was expected'
         assert type(NAME) == str, f'Name Error. {type(NAME)} given when string was expected'
-        assert type(track) == str, f'Track Error. {type(track)} given when numpy array was expected'
+        assert type(track) == np.ndarray, f'Track Error. {type(track)} given when numpy array was expected'
         assert (type(timestamps) == np.ndarray or type(timestamps) == pd.DataFrame), f'Unsupported timestamp iterator {type(timestamps)}'
         assert np.issubdtype(timestamps.dtype, np.datetime64), f'Unsupported timestamp type: {timestamps.dtype} - expected datetime64'
         
@@ -146,73 +247,62 @@ class tc_track:
         self.name = NAME
         self.track = track,
         self.timestamps = timestamps
-        
     
     def get_varmask(self,
-                    grid,
-                    distance_calculator,
+                    point,
+                    grid=ll_gridder(),
+                    distance_calculator=haversine,
+                    radius = 500,
                     ):
-        pass
-
-
-#%% Auxilliary Functions
-
-# Lat-lon grid generator
-def ll_gridder(origin = (0,0),
-               resolution = 0.25,
-               lon_mode = 'pos',
-               ):
-    """
-    ll_gridder is a lat-lon grid generator that's useful for generator the
-    data masks associated with the     
+        
+        return np.flip((distance_calculator(point[0],
+                                   point[1],
+                                   grid[0],
+                                   grid[1],
+                                   )<=radius).T[np.newaxis,:,:],
+                       axis=1)
     
-    Parameters
-    ----------
-    origin : TYPE, optional
-        DESCRIPTION. The default is (0,0).
-    resolution : TYPE, optional
-        DESCRIPTION. The default is 0.25.
-    lon_mode : TYPE, optional
-        DESCRIPTION. The default is 'pos'.
-     : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-    pass
-
-# Great circle distance calculations
-def haversine(latp, lonp, lat_list, lon_list):
-    """──────────────────────────────────────────────────────────────────────────┐
-      Haversine formula for calculating distance between target point (latp, 
-      lonp) and series of points (lat_list, lon_list). This function can handle 
-      2D lat/lon lists, but has been used with flattened data
-      
-      Based on:
-      https://medium.com/@petehouston/calculate-distance-of-two-locations-on-earth-using-python-1501b1944d97
-      
-      
-      Inputs:
-          latp - latitude of target point
-          
-          lonp - longitude of target point
-          
-          lat_list - list of latitudess (lat_p-1, lat_p-2 ... lon_p-n)
-      
-          lon_list - list of longitudess (lon_p-1, lon_p-2 ... lon_p-n)
-      
-      Outputs:
-      
-    └──────────────────────────────────────────────────────────────────────────"""
-    latp = np.radians(latp)
-    lonp = np.radians(lonp)
-    lat_list = np.radians(lat_list)
-    lon_list = np.radians(lon_list)
+    def add_var_from_dataarray(self,
+                            radius,
+                            data,
+                            resolution = None,
+                            origin = None
+                            ):
+        assert type(data) == xr.DataArray, f'Invalid data type {type(data)}. Expected xarray DataArray'
+        
+        # Sanitize timestamps because ibtracs includes unsual time steps,
+        # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00, 
+        # 2005-08-29 11:10:00, 2005-08-29 14:45:00
+        valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
+        
+        data_steps = data.sel(time=valid_steps)
+        
+        #TODO: sanitize data_steps shape to fit resolution
+        
+        #TODO: handle gridding at other resolutions
+        
+        mask = None
+        for stamp in valid_steps:
+            point = self.track[0][self.timestamps == stamp][0]
+            
+            temp_mask = self.get_varmask(point,
+                                         radius=radius)
+                
+            if mask is None:
+                mask = temp_mask
+            else:
+                mask = np.vstack([mask,
+                                  temp_mask])
+        
+        data_steps = data_steps*mask
+        
+        attr_name = f'{data.name}_res{resolution}_rad{radius}'
+        
+        setattr(self, 
+                attr_name, 
+                data_steps)
+            
+        
+        
     
-    dlon = lonp - lon_list
-    dlat = latp - lat_list
-    a = np.power(np.sin(dlat / 2),2) + np.cos(lat_list) * np.cos(latp) * np.power(np.sin(dlon / 2), 2)
-    return 2 * 6371 * np.arcsin(np.sqrt(a))
+    

@@ -11,10 +11,16 @@ used in other scripts to perform the tasks associated with TCBench
 
 #%% Imports and base paths
 
+# OS and IO
 import os
+import traceback
+
+# Base Libraries
 import pandas as pd
 import numpy as np
 import xarray as xr
+
+# TCBench Libraries
 import constants
 
 # Retrieve Repository Path
@@ -229,6 +235,9 @@ def process_py_track_data(data,
     
     pass
 
+# Class used to process track file and instantiate a track per event
+
+
 # Class presenting each track type
 class tc_track:
     def __init__(self,
@@ -237,16 +246,21 @@ class tc_track:
                  track,
                  timestamps,
                  ):
-        assert type(UID) == str, f'Unique Identifier Error. {type(UID)} given when string was expected'
-        assert type(NAME) == str, f'Name Error. {type(NAME)} given when string was expected'
-        assert type(track) == np.ndarray, f'Track Error. {type(track)} given when numpy array was expected'
-        assert (type(timestamps) == np.ndarray or type(timestamps) == pd.DataFrame), f'Unsupported timestamp iterator {type(timestamps)}'
-        assert np.issubdtype(timestamps.dtype, np.datetime64), f'Unsupported timestamp type: {timestamps.dtype} - expected datetime64'
-        
-        self.uid = UID
-        self.name = NAME
-        self.track = track,
-        self.timestamps = timestamps
+        try:
+            assert type(UID) == str, f'Unique Identifier Error. {type(UID)} given when string was expected'
+            assert type(NAME) == str, f'Name Error. {type(NAME)} given when string was expected'
+            assert type(track) == np.ndarray, f'Track Error. {type(track)} given when numpy array was expected'
+            assert (type(timestamps) == np.ndarray or type(timestamps) == pd.DataFrame), f'Unsupported timestamp iterator {type(timestamps)}'
+            assert np.issubdtype(timestamps.dtype, np.datetime64), f'Unsupported timestamp type: {timestamps.dtype} - expected datetime64'
+            
+            self.uid = UID
+            self.name = NAME
+            self.track = track,
+            self.timestamps = timestamps
+        except Exception as e:
+            print(f'Encountered and exception when instiating a tc_track object: \n{e}\n')
+            print(traceback.format_exc())
+
     
     def get_varmask(self,
                     point,

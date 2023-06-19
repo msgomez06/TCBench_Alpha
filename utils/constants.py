@@ -95,7 +95,9 @@ sgs_track_cols = track_cols(# Basin Corresponts to ibtracs basin
                             __META = {'UID':'SID',
                                       'COSMETIC_NAME':'NAME',
                                       'Y_coord':'lat',
-                                      'X_coord':'lon'}
+                                      'X_coord':'lon',
+                                      'TIME_coord':'datetime',
+                                      }
                             )
 
 # Track column data for ibtracs file
@@ -153,7 +155,9 @@ ibtracs_cols = track_cols(# Storm ID number
                           __META = {'UID':'SID',
                                     'COSMETIC_NAME':'NAME',
                                     'Y_coord':'LAT',
-                                    'X_coord':'LON'}
+                                    'X_coord':'LON',
+                                    'TIME_coord':'ISO_TIME',
+                                    }
                           )
 
 #%%

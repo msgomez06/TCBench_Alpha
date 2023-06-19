@@ -235,6 +235,18 @@ def process_py_track_data(data,
     
     pass
 
+# Functions to sanitize timestamp data
+def sanitize_timestamps(timestamps,
+                        data):
+    # Sanitize timestamps because ibtracs includes unsual time steps,
+    # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00, 
+    # 2005-08-29 11:10:00, 2005-08-29 14:45:00
+    valid_steps = timestamps[np.isin(timestamps, data.time.values)]
+    
+    data_steps = data.sel(time=valid_steps)
+    return data_steps
+
+
 # Class used to process track file and instantiate a track per event
 
 
@@ -264,11 +276,16 @@ class tc_track:
     
     def get_varmask(self,
                     point,
-                    grid=ll_gridder(),
-                    distance_calculator=haversine,
-                    radius = 500,
-                    ):
+                    **kwargs):
         
+        # read in parameters if submitted, otherwise use defaults
+        radius = kwargs['radius'] if 'radius' in kwargs.keys() else 500
+        grid = kwargs['grid'] if 'grid' in kwargs.keys() else ll_gridder()
+        distance_calculator = kwargs['distance_calculator'] if 'distance_calculator' in kwargs.keys() else haversine
+        radius = kwargs['radius'] if 'radius' in kwargs.keys() else 500
+
+
+
         return np.flip((distance_calculator(point[0],
                                    point[1],
                                    grid[0],
@@ -276,6 +293,44 @@ class tc_track:
                                    )<=radius).T[np.newaxis,:,:],
                        axis=1)
     
+    def get_mask_series(self,
+                        timesteps,
+                        **kwargs):
+        
+        # read in parameters if submitted, otherwise use defaults
+        radius = kwargs['radius'] if 'radius' in kwargs.keys() else 500
+        resolution = kwargs['resolution'] if 'resolution' in kwargs.keys() else 0.25
+        origin = kwargs['origin'] if 'origin' in kwargs.keys() else (0,0)
+        lon_mode = kwargs['lon_mode'] if 'lon_mode' in kwargs.keys() else 360
+        lat_limits = kwargs['lat_limits'] if 'lat_limits' in kwargs.keys() else None
+        lon_limits = kwargs['lon_limits'] if 'lon_limits' in kwargs.keys() else None
+        use_poles = kwargs['use_poles'] if 'use_poles' in kwargs.keys() else True
+        distance_calculator = kwargs['distance_calculator'] if 'distance_calculator' in kwargs.keys() else haversine
+        
+        # Generate grid
+        grid = ll_gridder(resolution = resolution,
+                          origin = origin,
+                          lon_mode = lon_mode,
+                          lat_limits=lat_limits,
+                          lon_limits=lon_limits,
+                          use_poles=use_poles)
+        
+        mask = None
+
+        for stamp in timesteps:
+            point = self.track[0][self.timestamps == stamp][0]
+            
+            temp_mask = self.get_varmask(point,
+                                         radius=radius,
+                                         grid=grid)
+                
+            if mask is None:
+                mask = temp_mask
+            else:
+                mask = np.vstack([mask,
+                                  temp_mask])
+        return mask
+
     def add_var_from_dataarray(self,
                             radius,
                             data,
@@ -288,26 +343,16 @@ class tc_track:
         # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00, 
         # 2005-08-29 11:10:00, 2005-08-29 14:45:00
         valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
-        
         data_steps = data.sel(time=valid_steps)
         
         #TODO: sanitize data_steps shape to fit resolution
+
+
         
-        #TODO: handle gridding at other resolutions
-        
-        mask = None
-        for stamp in valid_steps:
-            point = self.track[0][self.timestamps == stamp][0]
-            
-            temp_mask = self.get_varmask(point,
-                                         radius=radius)
-                
-            if mask is None:
-                mask = temp_mask
-            else:
-                mask = np.vstack([mask,
-                                  temp_mask])
-        
+        mask = self.get_mask_series(valid_steps,
+                                    radius=radius,
+                                    resolution=resolution)
+
         
         data_steps = data_steps.where(mask)
         
@@ -316,8 +361,27 @@ class tc_track:
         setattr(self, 
                 attr_name, 
                 data_steps)
-            
-        
-        
     
+    def add_var_from_dataset(self,
+                             radius,
+                             data,
+                             resolution = None,
+                             origin = None):
+        assert type(data) == xr.Dataset, f'Invalid data type {type(data)}. Expected xarray Dataset'
+
+        # Sanitize timestamps because ibtracs includes unsual time steps,
+        # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00, 
+        # 2005-08-29 11:10:00, 2005-08-29 14:45:00
+        valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
+        data_steps = data.sel(time=valid_steps)
+        
+        mask = self.get_mask_series(valid_steps,
+                                    radius=radius,
+                                    resolution=resolution)
+        
+        data_steps = data_steps.where(mask)
+
+        setattr(self,
+                'ds',
+                data_steps)
     

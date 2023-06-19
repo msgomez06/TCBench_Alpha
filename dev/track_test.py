@@ -64,10 +64,5 @@ vmax = plot_test.max()
 for i in range(61):
     plt.figure(dpi=150)
     plot_test.isel(time=i).plot.imshow(vmin=vmin, vmax=vmax)
-
-
-#%% Comments to keep track of:
-'''
-Elimination of 'weird' ibtracs timestamps
-'''
-# %%
+    plt.show()
+    plt.close()

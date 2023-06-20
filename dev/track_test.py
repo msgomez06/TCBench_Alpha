@@ -47,22 +47,23 @@ track = toolbox.tc_track(UID=katrina.SID.iloc[0],
 #%%
 data_path = '/work/FAC/FGSE/IDYST/tbeucler/default/saranya/Data/ECMWF/ERA5_25kmx3hr/mslp/mslp_2005.nc'
 
-meteo_data = xr.open_dataarray(data_path)
+meteo_data = xr.open_dataset(data_path)
 
 #%%
-track.add_var_from_dataarray(radius=1500,
-                             data = meteo_data,
-                             resolution=0.25,
-                             )
+track.add_var_from_dataset(radius=10000,
+                           data = meteo_data,
+                           resolution=5,
+                           )
 
 #%%
-plot_test = track.__dict__['var151_res0.25_rad1500']
+plot_test = track.ds
 
-vmin = plot_test.min()
-vmax = plot_test.max()
+vmin = plot_test.var151.min()
+vmax = plot_test.var151.max()
 
 for i in range(61):
     plt.figure(dpi=150)
-    plot_test.isel(time=i).plot.imshow(vmin=vmin, vmax=vmax)
+    plot_test.isel(time=i).var151.plot.imshow(vmin=vmin, vmax=vmax)
     plt.show()
     plt.close()
+# %%

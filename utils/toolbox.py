@@ -19,6 +19,7 @@ import traceback
 import pandas as pd
 import numpy as np
 import xarray as xr
+import xesmf as xe
 
 # TCBench Libraries
 import constants
@@ -29,37 +30,14 @@ repo_path = '/'+os.path.join(*os.getcwd().split('/')[:-1])
 print(repo_path)
 
 #%% Auxilliary Functions
+def axis_generator(**kwargs):
+    origin = kwargs.get('origin', (0,0))
+    resolution = kwargs.get('resolution', 0.25)
+    lat_limits = kwargs.get('lat_limits', None)
+    lon_limits = kwargs.get('lon_limits', None)
+    lon_mode = kwargs.get('lon_mode', 360)
+    use_poles = kwargs.get('use_poles', True)
 
-# Lat-lon grid generator
-def ll_gridder(origin = (0,0),
-               resolution = 0.25,
-               lon_mode = 360,
-               lat_limits = None,
-               lon_limits = None,
-               use_poles = True):
-    """
-    ll_gridder is a lat-lon grid generator that's useful for generator the
-    data masks associated with the     
-    
-    Parameters
-    ----------
-    origin : TYPE, optional
-        DESCRIPTION. The default is (0,0).
-    resolution : TYPE, optional
-        DESCRIPTION. The default is 0.25.
-    lon_mode : TYPE, optional
-        DESCRIPTION. The default is 'pos'.
-     : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-    assert type(use_poles) is bool, f'Unexpected type for use_poles:{type(use_poles)}. Expected boolean.'
-    assert lon_mode == 180 or lon_mode == 360, f'Invalid long mode in ll_gridder: {lon_mode}. Expected 180 or 360 as ints'
-    
     if lat_limits is not None:
         assert origin[0] >= lat_limits[0], 'Origin lower limit less than origin value'
         assert origin[0] <= lat_limits[1], 'Origin lower limit less than origin value'
@@ -86,6 +64,52 @@ def ll_gridder(origin = (0,0),
     # Sanitize outputs
     lat_vector = np.unique(lat_vector)
     lon_vector = np.unique(lon_vector)
+
+    return lat_vector, lon_vector
+    
+
+
+# Lat-lon grid generator
+def ll_gridder(**kwargs):
+    """
+    ll_gridder is a lat-lon grid generator that's useful for generator the
+    data masks associated with the     
+    
+    Parameters
+    ----------
+    origin : TYPE, optional
+        DESCRIPTION. The default is (0,0).
+    resolution : TYPE, optional
+        DESCRIPTION. The default is 0.25.
+    lon_mode : TYPE, optional
+        DESCRIPTION. The default is 'pos'.
+     : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    None.
+
+    """
+    origin = kwargs.get('origin', (0,0))
+    resolution = kwargs.get('resolution', 0.25)
+    lon_mode = kwargs.get('lon_mode', 360)
+    lat_limits = kwargs.get('lat_limits', None)
+    lon_limits = kwargs.get('lon_limits', None)
+    use_poles = kwargs.get('use_poles', True)
+
+
+
+    assert type(use_poles) is bool, f'Unexpected type for use_poles:{type(use_poles)}. Expected boolean.'
+    assert lon_mode == 180 or lon_mode == 360, f'Invalid long mode in ll_gridder: {lon_mode}. Expected 180 or 360 as ints'
+    
+    
+    lat_vector, lon_vector = axis_generator(origin = origin,
+                                            resolution = resolution,
+                                            lat_limits = lat_limits,
+                                            lon_limits = lon_limits,
+                                            lon_mode = lon_mode,
+                                            use_poles = use_poles)
     
     lats, lons = np.meshgrid(lat_vector, lon_vector)
     
@@ -286,26 +310,26 @@ class tc_track:
 
 
 
-        return np.flip((distance_calculator(point[0],
+        return (distance_calculator(point[0],
                                    point[1],
                                    grid[0],
                                    grid[1],
-                                   )<=radius).T[np.newaxis,:,:],
-                       axis=1)
+                                   )<=radius).T[np.newaxis,:,:]
     
     def get_mask_series(self,
                         timesteps,
                         **kwargs):
         
         # read in parameters if submitted, otherwise use defaults
-        radius = kwargs['radius'] if 'radius' in kwargs.keys() else 500
-        resolution = kwargs['resolution'] if 'resolution' in kwargs.keys() else 0.25
-        origin = kwargs['origin'] if 'origin' in kwargs.keys() else (0,0)
-        lon_mode = kwargs['lon_mode'] if 'lon_mode' in kwargs.keys() else 360
-        lat_limits = kwargs['lat_limits'] if 'lat_limits' in kwargs.keys() else None
-        lon_limits = kwargs['lon_limits'] if 'lon_limits' in kwargs.keys() else None
-        use_poles = kwargs['use_poles'] if 'use_poles' in kwargs.keys() else True
-        distance_calculator = kwargs['distance_calculator'] if 'distance_calculator' in kwargs.keys() else haversine
+        radius = kwargs.get('radius', 500)
+        resolution = kwargs.get('resolution', 0.25)
+        origin = kwargs.get('origin', (0,0))
+        lon_mode = kwargs.get('lon_mode', 360)
+        lat_limits = kwargs.get('lat_limits', None)
+        lon_limits = kwargs.get('lon_limits', None)
+        use_poles = kwargs.get('use_poles', True)
+        distance_calculator = kwargs.get('distance_calculator', haversine)
+
         
         # Generate grid
         grid = ll_gridder(resolution = resolution,
@@ -313,7 +337,7 @@ class tc_track:
                           lon_mode = lon_mode,
                           lat_limits=lat_limits,
                           lon_limits=lon_limits,
-                          use_poles=use_poles)
+                          use_poles=use_poles,)
         
         mask = None
 
@@ -322,7 +346,8 @@ class tc_track:
             
             temp_mask = self.get_varmask(point,
                                          radius=radius,
-                                         grid=grid)
+                                         grid=grid,
+                                         distance_calculator=distance_calculator,)
                 
             if mask is None:
                 mask = temp_mask
@@ -332,11 +357,10 @@ class tc_track:
         return mask
 
     def add_var_from_dataarray(self,
-                            radius,
-                            data,
-                            resolution = None,
-                            origin = None
-                            ):
+                               radius,
+                               data,
+                               **kwargs):
+        
         assert type(data) == xr.DataArray, f'Invalid data type {type(data)}. Expected xarray DataArray'
         
         # Sanitize timestamps because ibtracs includes unsual time steps,
@@ -365,8 +389,7 @@ class tc_track:
     def add_var_from_dataset(self,
                              radius,
                              data,
-                             resolution = None,
-                             origin = None):
+                             **kwargs):
         assert type(data) == xr.Dataset, f'Invalid data type {type(data)}. Expected xarray Dataset'
 
         # Sanitize timestamps because ibtracs includes unsual time steps,
@@ -375,6 +398,46 @@ class tc_track:
         valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
         data_steps = data.sel(time=valid_steps)
         
+
+        #TODO: sanitize data_steps shape to fit resolution
+        if 'resolution' in kwargs.keys():
+            origin = kwargs.get('origin', (0,0))
+            lon_mode = kwargs.get('lon_mode', 360)
+            lat_limits = kwargs.get('lat_limits', None)
+            lon_limits = kwargs.get('lon_limits', None)
+            use_poles = kwargs.get('use_poles', True)
+            resolution = kwargs.get('resolution')
+            
+
+            grid = ll_gridder(resolution = resolution,
+                              origin = origin,
+                              lon_mode = lon_mode,
+                              lat_limits=lat_limits,
+                              lon_limits=lon_limits,
+                              use_poles=use_poles)
+
+            lat_vector, lon_vector = axis_generator(**kwargs)
+            
+
+            
+            assert lon_vector.shape<data_steps.lon.shape, f'Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported.'
+            assert lat_vector.shape<data_steps.lat.shape, f'Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported.'
+
+            casting_array = xr.DataArray(np.NaN,
+                                         dims=['lat','lon'],
+                                         coords={'lat':lat_vector,
+                                                 'lon':lon_vector})
+
+            regridder = xe.Regridder(data_steps,
+                                     casting_array,
+                                     'bilinear',)
+            
+            data_steps = regridder(data_steps)
+            
+            
+            
+
+
         mask = self.get_mask_series(valid_steps,
                                     radius=radius,
                                     resolution=resolution)
@@ -385,3 +448,4 @@ class tc_track:
                 'ds',
                 data_steps)
     
+# %%

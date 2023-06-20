@@ -109,7 +109,17 @@ for uid in track_data[uidx].unique():
     
     track_list[-1].add_var_from_dataset(radius=1500,
                                         data = ds,
-                                        resolution=0.25,
+                                        resolution=5,
                                         )
 
+# %%
+for track in track_list:
+    plt.figure()
+    plt.suptitle(f'{track.name}, {track.uid}, {track.timestamps[0]} - {track.timestamps[-1]}')
+    #vmin= track.ds.var151.min()
+    #vmax= track.ds.var151.max()
+    track.ds.isel(time=0).var151.plot.imshow()
+    
+    plt.show()
+    plt.close()
 # %%

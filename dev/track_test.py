@@ -50,9 +50,9 @@ data_path = '/work/FAC/FGSE/IDYST/tbeucler/default/saranya/Data/ECMWF/ERA5_25kmx
 meteo_data = xr.open_dataset(data_path)
 
 #%%
-track.add_var_from_dataset(radius=10000,
+track.add_var_from_dataset(radius=1500,
                            data = meteo_data,
-                           resolution=5,
+                           resolution=10,
                            )
 
 #%%

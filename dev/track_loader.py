@@ -22,6 +22,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 import pandas as pd
+import cartopy.crs as ccrs
+import cartopy
 
 # Retrieve Repository Path
 repo_path = '/'+os.path.join(*os.getcwd().split('/')[:-1])
@@ -34,7 +36,7 @@ util_path = f'{repo_path}/utils/'
 
 import constants, toolbox
 #%% Define the years of interest
-years = np.arange(1999, 2000)
+years = np.arange(2005, 2006)
 
 #%% Load track data
 
@@ -47,13 +49,16 @@ cols = constants.ibtracs_cols
 
 # Load the track data using the toolbox function
 track_data = toolbox.read_hist_track_file(tracks_path = tracks_path,
-                                          track_cols = cols)
+                                          track_cols = cols,
+                                          backend=cols._track_cols__metadata['loader'],)
+
+t = cols._track_cols__metadata['TIME_coord']
 
 # Filter the track data to only include the years of interest
-track_data = track_data[track_data.ISO_TIME.dt.year.isin(years)]
+track_data = track_data[track_data[t].dt.year.isin(years)]
 
 # Assert that all of the years are present
-assert np.all(np.isin(years, track_data.ISO_TIME.dt.year.unique())), 'Not all years are present in the track data'
+assert np.all(np.isin(years, track_data[t].dt.year.unique())), 'Not all years are present in the track data'
 
 #%% Data laoding with xarray
 
@@ -98,8 +103,12 @@ y = cols._track_cols__metadata['Y_coord']
 t = cols._track_cols__metadata['TIME_coord']
 
 track_list = []
-# Built the track list
-for uid in track_data[uidx].unique():
+
+num_trax = len(track_data[uidx].unique())
+
+# Build the track list
+for idx, uid in enumerate(track_data[uidx].unique()):
+    print('\r Calculating track', uid, f' {(idx+1)/(num_trax):<5.1%}', end='')
     data = track_data.loc[track_data[uidx]==uid]
     track_list.append(toolbox.tc_track(UID=uid,
                                        NAME=data[name].iloc[0],
@@ -107,19 +116,65 @@ for uid in track_data[uidx].unique():
                                        timestamps= data[t].to_numpy(),
                                        ))
     
-    track_list[-1].add_var_from_dataset(radius=1500,
+    track_list[-1].add_var_from_dataset(circum_points=5,
                                         data = ds,
-                                        resolution=5,
+                                        resolution=1,
+                                        masktype='rect'
+                                        )
+    
+    track_list[-1].add_var_from_dataset(data = ds,
+                                        resolution=1,
+                                        masktype='rad',
+                                        radius=500
                                         )
 
 # %%
-for track in track_list:
-    plt.figure()
-    plt.suptitle(f'{track.name}, {track.uid}, {track.timestamps[0]} - {track.timestamps[-1]}')
-    #vmin= track.ds.var151.min()
-    #vmax= track.ds.var151.max()
-    track.ds.isel(time=0).var151.plot.imshow()
-    
-    plt.show()
-    plt.close()
+if __name__ == '__main__':
+    skip_step = 4
+    for track in track_list:
+        #track.rect_ds.isel(time=0).var151.plot.imshow(ax=ax,
+        #                                         alpha=0.25,)
+        vmin = track.rad_ds.var151.min().values
+        vmax = track.rad_ds.var151.max().values
+        
+        time = pd.to_datetime(track.rect_ds.time.isel(time=0).values).strftime('%Y.%m.%d')    
+        
+        fig = plt.figure(dpi=300) 
+        ax = plt.axes(projection=ccrs.PlateCarree())
+        ax.set_title('Mean Sea Level Pressure')
+        ax.coastlines()
+        fig.suptitle(f'{track.name} {time} Radial Data')  
+        for timestamp in track.rad_ds.time[::skip_step]:
+
+                      
+            temp_data = track.rad_ds.sel(time=timestamp).var151.plot.imshow(ax=ax,
+                                                                            vmin=vmin,
+                                                                            vmax=vmax,
+                                                                            transform=ccrs.PlateCarree(),
+                                                                            alpha=0.33,
+                                                                            add_colorbar=False,)
+
+        plt.show()
+        plt.close()
+
+        fig = plt.figure(dpi=300) 
+        ax = plt.axes(projection=ccrs.PlateCarree())
+        ax.set_title('Mean Sea Level Pressure')
+        ax.coastlines()
+        fig.suptitle(f'{track.name} {time} Rectangular Data')  
+        for timestamp in track.rect_ds.time[::skip_step]:
+
+                      
+            temp_data = track.rect_ds.sel(time=timestamp).var151.plot.imshow(ax=ax,
+                                                                             vmin=vmin,
+                                                                             vmax=vmax,
+                                                                             transform=ccrs.PlateCarree(),
+                                                                             alpha=0.33,
+                                                                             add_colorbar=False,)
+
+        plt.show()
+        plt.close()
+        
+            
+        
 # %%

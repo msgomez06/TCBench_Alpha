@@ -11,9 +11,12 @@ scripts used in TC Bench
 
 #%% Library Imports
 import numpy as np
+import pandas as pd
+
+
+
 
 #%% Columns for track files
-
 class track_cols:
     def __init__(self,
                  **kwargs):
@@ -97,7 +100,7 @@ sgs_track_cols = track_cols(# Basin Corresponts to ibtracs basin
                                       'Y_coord':'lat',
                                       'X_coord':'lon',
                                       'TIME_coord':'datetime',
-                                      }
+                                      'loader':pd.read_csv,}
                             )
 
 # Track column data for ibtracs file
@@ -157,7 +160,40 @@ ibtracs_cols = track_cols(# Storm ID number
                                     'Y_coord':'LAT',
                                     'X_coord':'LON',
                                     'TIME_coord':'ISO_TIME',
-                                    }
+                                    'loader':pd.read_csv,}
                           )
+
+# Track column data for Meteo France La Reunion file
+reunion_track_cols = track_cols(# Storm Season
+                                SAISON = int,
+                                
+                                # Name of the storm
+                                NOM_CYC = str,
+                                
+                                # Seasonal number of the depression
+                                NUM_DEPR = int,
+                                
+                                # Storm ID
+                                ID = str,
+
+                                # Track point timestamp
+                                ANNEE = np.datetime64,
+                                MOIS = np.datetime64,
+                                JOUR = np.datetime64,
+                                HEURE_UTC = np.datetime64,
+
+                                
+                                # Coordinates
+                                LAT = np.float16,
+                                LON = np.float16,
+                            
+                                # Metadata for constructing track objects
+                                __META = {'UID':'ID',
+                                        'COSMETIC_NAME':'NOM_CYC',
+                                        'Y_coord':'LAT',
+                                        'X_coord':'LON',
+                                        'TIME_coord':'date',
+                                        'loader':'meteo_france',}
+                                )
 
 #%%

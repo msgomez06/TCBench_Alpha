@@ -30,6 +30,7 @@ repo_path = '/'+os.path.join(*os.getcwd().split('/')[:-1])
 print(repo_path)
 
 #%% Auxilliary Functions
+
 def axis_generator(**kwargs):
     origin = kwargs.get('origin', (0,0))
     resolution = kwargs.get('resolution', 0.25)
@@ -39,14 +40,14 @@ def axis_generator(**kwargs):
     use_poles = kwargs.get('use_poles', True)
 
     if lat_limits is not None:
-        assert origin[0] >= lat_limits[0], 'Origin lower limit less than origin value'
-        assert origin[0] <= lat_limits[1], 'Origin lower limit less than origin value'
+        assert origin[0] >= lat_limits[0], 'Origin lower limit greater than origin value'
+        assert origin[0] <= lat_limits[1], 'Origin upper limit less than origin value'
     else:
         lat_limits = (-90,90)
     
     if lon_limits is not None:
-        assert origin[1] >= lon_limits[0], 'Origin lower limit less than origin value'
-        assert origin[1] <= lon_limits[1], 'Origin lower limit less than origin value'    
+        assert origin[1] >= lon_limits[0], 'Origin lower limit greater than origin value'
+        assert origin[1] <= lon_limits[1], 'Origin upper limit less than origin value'    
     else:
         lon_limits = (0,360) if lon_mode == 360 else (-180,180)
     
@@ -118,7 +119,11 @@ def ll_gridder(**kwargs):
     
 
 # Great circle distance calculations
-def haversine(latp, lonp, lat_list, lon_list):
+def haversine(latp, 
+              lonp, 
+              lat_list, 
+              lon_list,
+              **kwargs):
     """──────────────────────────────────────────────────────────────────────────┐
       Haversine formula for calculating distance between target point (latp, 
       lonp) and series of points (lat_list, lon_list). This function can handle 
@@ -140,6 +145,8 @@ def haversine(latp, lonp, lat_list, lon_list):
       Outputs:
       
     └──────────────────────────────────────────────────────────────────────────"""
+    epsilon = kwargs.get('epsilon', 1e-6)
+    
     latp = np.radians(latp)
     lonp = np.radians(lonp)
     lat_list = np.radians(lat_list)
@@ -148,6 +155,14 @@ def haversine(latp, lonp, lat_list, lon_list):
     dlon = lonp - lon_list
     dlat = latp - lat_list
     a = np.power(np.sin(dlat / 2),2) + np.cos(lat_list) * np.cos(latp) * np.power(np.sin(dlon / 2), 2)
+    
+    # Assert that sqrt(a) is within machine precision of 1
+    # assert np.all(np.sqrt(a) <= 1 + epsilon), 'Invalid argument for arcsin'
+
+    # Check if square root of a is a valid argument for arcsin within machine precision
+    # If not, set to 1 or -1 depending on sign of a
+    a = np.where(np.sqrt(a) <= 1, a, np.sign(a))
+     
     return 2 * 6371 * np.arcsin(np.sqrt(a))
 
 #%% Data Processing / Preprocessing Library
@@ -198,15 +213,25 @@ def read_hist_track_file(tracks_path = f'{repo_path}/tracks/ibtracs/',
     
     with open(f'{tracks_path}/{file_list[0]}') as handle:
         if backend == pd.read_csv:      
-
             data = backend(handle,
                            usecols = track_cols.get_colnames(),
                            dtype = track_cols.get_dtypes(),
                            skiprows = skip_rows,
                            parse_dates = track_cols.get_datetime_cols(),
-                           #index_col = track_cols._track_cols__metadata['UID'],
                            )
-            
+        elif backend == 'meteo_france':
+            data = pd.read_csv(handle,
+                              usecols = track_cols.get_colnames(),
+                              dtype = track_cols.get_dtypes(),
+                              #parse_dates = {'date':[*track_cols.get_datetime_cols()]},
+                              sep=';')
+            datetime_cols = track_cols.get_datetime_cols()
+            data['date'] = pd.to_datetime(data[datetime_cols].copy().rename(columns={'ANNEE':'year', 
+                                                                                     'MOIS':'month',
+                                                                                     'JOUR':'day',
+                                                                                     'HEURE_UTC':'hour'}))
+        else:
+            data = backend(handle)
     
     return data
 
@@ -298,17 +323,14 @@ class tc_track:
             print(traceback.format_exc())
 
     
-    def get_varmask(self,
+    def get_radmask(self,
                     point,
                     **kwargs):
         
         # read in parameters if submitted, otherwise use defaults
-        radius = kwargs['radius'] if 'radius' in kwargs.keys() else 500
-        grid = kwargs['grid'] if 'grid' in kwargs.keys() else ll_gridder()
-        distance_calculator = kwargs['distance_calculator'] if 'distance_calculator' in kwargs.keys() else haversine
-        radius = kwargs['radius'] if 'radius' in kwargs.keys() else 500
-
-
+        radius = kwargs.get('radius', 500)
+        grid = kwargs.get('grid', ll_gridder(**kwargs))
+        distance_calculator = kwargs.get('distance_calculator', haversine)
 
         return (distance_calculator(point[0],
                                    point[1],
@@ -316,38 +338,53 @@ class tc_track:
                                    grid[1],
                                    )<=radius).T[np.newaxis,:,:]
     
+    def get_rectmask(self,
+                     point,
+                     **kwargs):
+        
+        # read in parameters if submitted, otherwise use defaults
+        grid = kwargs.get('grid', ll_gridder(**kwargs))
+        distance_calculator = kwargs.get('distance_calculator', haversine)
+        circum_points = kwargs.get('circum_points', 4)
+
+        distances = distance_calculator(point[0],
+                                        point[1],
+                                        grid[0],
+                                        grid[1],
+                                        ).T[np.newaxis,:,:]
+        
+        min_idx = np.unravel_index(distances.argmin(), distances.shape)
+
+        output = np.zeros_like(distances)
+        output[min_idx[0],
+               min_idx[1]-circum_points:min_idx[1]+circum_points+1, 
+               min_idx[2]-circum_points:min_idx[2]+circum_points+1] = 1
+        
+        return output
+
+    
     def get_mask_series(self,
                         timesteps,
                         **kwargs):
         
         # read in parameters if submitted, otherwise use defaults
-        radius = kwargs.get('radius', 500)
-        resolution = kwargs.get('resolution', 0.25)
-        origin = kwargs.get('origin', (0,0))
-        lon_mode = kwargs.get('lon_mode', 360)
-        lat_limits = kwargs.get('lat_limits', None)
-        lon_limits = kwargs.get('lon_limits', None)
-        use_poles = kwargs.get('use_poles', True)
-        distance_calculator = kwargs.get('distance_calculator', haversine)
-
+        masktype = kwargs.get('masktype', 'rad')
         
+        if masktype == 'rad': get_mask = self.get_radmask
+        elif masktype == 'rect': get_mask = self.get_rectmask
+        else: raise ValueError(f'Unsupported mask type {masktype}')
+
+
         # Generate grid
-        grid = ll_gridder(resolution = resolution,
-                          origin = origin,
-                          lon_mode = lon_mode,
-                          lat_limits=lat_limits,
-                          lon_limits=lon_limits,
-                          use_poles=use_poles,)
+        grid = ll_gridder(**kwargs)
         
         mask = None
 
         for stamp in timesteps:
             point = self.track[0][self.timestamps == stamp][0]
             
-            temp_mask = self.get_varmask(point,
-                                         radius=radius,
-                                         grid=grid,
-                                         distance_calculator=distance_calculator,)
+            temp_mask = get_mask(point,
+                                 **kwargs)
                 
             if mask is None:
                 mask = temp_mask
@@ -360,7 +397,11 @@ class tc_track:
                                radius,
                                data,
                                **kwargs):
-        
+        """
+        DEPRECATED - DO NOT USE - BROKEN
+        Use add_var_from_dataset instead
+        """
+
         assert type(data) == xr.DataArray, f'Invalid data type {type(data)}. Expected xarray DataArray'
         
         # Sanitize timestamps because ibtracs includes unsual time steps,
@@ -387,7 +428,6 @@ class tc_track:
                 data_steps)
     
     def add_var_from_dataset(self,
-                             radius,
                              data,
                              **kwargs):
         assert type(data) == xr.Dataset, f'Invalid data type {type(data)}. Expected xarray Dataset'
@@ -399,53 +439,33 @@ class tc_track:
         data_steps = data.sel(time=valid_steps)
         
 
-        #TODO: sanitize data_steps shape to fit resolution
-        if 'resolution' in kwargs.keys():
-            origin = kwargs.get('origin', (0,0))
-            lon_mode = kwargs.get('lon_mode', 360)
-            lat_limits = kwargs.get('lat_limits', None)
-            lon_limits = kwargs.get('lon_limits', None)
-            use_poles = kwargs.get('use_poles', True)
-            resolution = kwargs.get('resolution')
-            
-
-            grid = ll_gridder(resolution = resolution,
-                              origin = origin,
-                              lon_mode = lon_mode,
-                              lat_limits=lat_limits,
-                              lon_limits=lon_limits,
-                              use_poles=use_poles)
-
-            lat_vector, lon_vector = axis_generator(**kwargs)
-            
-
-            
-            assert lon_vector.shape<data_steps.lon.shape, f'Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported.'
-            assert lat_vector.shape<data_steps.lat.shape, f'Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported.'
-
-            casting_array = xr.DataArray(np.NaN,
-                                         dims=['lat','lon'],
-                                         coords={'lat':lat_vector,
-                                                 'lon':lon_vector})
-
-            regridder = xe.Regridder(data_steps,
-                                     casting_array,
-                                     'bilinear',)
-            
-            data_steps = regridder(data_steps)
-            
-            
-            
-
-
-        mask = self.get_mask_series(valid_steps,
-                                    radius=radius,
-                                    resolution=resolution)
+        # Generate lat and lot vectors
+        lat_vector, lon_vector = axis_generator(**kwargs)
         
+        assert lon_vector.shape<=data_steps.lon.shape, f'Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported.'
+        assert lat_vector.shape<=data_steps.lat.shape, f'Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported.'
+
+        # Generate empty array to cast data with
+        casting_array = xr.DataArray(np.NaN,
+                                        dims=['lat','lon'],
+                                        coords={'lat':lat_vector,
+                                                'lon':lon_vector})
+
+        regridder = xe.Regridder(data_steps,
+                                 casting_array,
+                                 'bilinear',)
+        
+        data_steps = regridder(data_steps)
+            
+        mask = self.get_mask_series(valid_steps,
+                                    **kwargs)
+
+        ds_type = kwargs.get('masktype', 'rad')
+
         data_steps = data_steps.where(mask)
 
         setattr(self,
-                'ds',
+                f'{ds_type}_ds',
                 data_steps)
     
 # %%

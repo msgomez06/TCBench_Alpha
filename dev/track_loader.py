@@ -36,7 +36,7 @@ util_path = f'{repo_path}/utils/'
 
 import constants, toolbox
 #%% Define the years of interest
-years = np.arange(2005, 2006)
+years = np.arange(2020, 2021)
 
 #%% Load track data
 
@@ -94,7 +94,6 @@ for path in paths:
     else:
         ds = xr.concat([ds, xr.open_mfdataset(path, **kwargs)], dim='time')
 # %%
-
 # Load the keys from the track data metadata
 uidx = cols._track_cols__metadata['UID']
 name = cols._track_cols__metadata['COSMETIC_NAME']

@@ -196,4 +196,14 @@ reunion_track_cols = track_cols(# Storm Season
                                         'loader':'meteo_france',}
                                 )
 
-#%%
+#%% PRIMED Metadata
+# Questions for developers:
+# Why are the files organized by these basins but the metadata includes
+# basins? Why are the basins not the same?
+primed_basins = set(['AL', # North Atlantic
+                    'CP', # Central Pacific
+                    'EP', # Eastern North Pacific
+                    'IO', # Indian Ocean
+                    'SH', # Southern Hemisphere
+                    'WP', # Western North Pacific
+                    ])

@@ -19,8 +19,10 @@ import constants
 #%% Set up the dataloading paths
 
 base_dir = '/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/CIRA/primed'
-years = np.arange(1997, 2020)
+years = np.arange(2000, 2020)
 basin_set = constants.primed_basins
+
+basin_set = ['AL']
 
 storm_basins = set()
 storm_ids = set()

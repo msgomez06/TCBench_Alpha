@@ -218,6 +218,7 @@ def read_hist_track_file(tracks_path = f'{repo_path}/tracks/ibtracs/',
                            dtype = track_cols.get_dtypes(),
                            skiprows = skip_rows,
                            parse_dates = track_cols.get_datetime_cols(),
+                           na_filter = False, # Otherwise pandas interprets 'NA' as NaN
                            )
         elif backend == 'meteo_france':
             data = pd.read_csv(handle,

@@ -3,7 +3,7 @@
 """
 Created on Tue Jun 13 10:57:33 2023
 
-Script to develop multi-track handling. Before package __init__ structure - deprected example
+Script to develop multi-track handling. 
 
 @author: mgomezd1
 """
@@ -31,7 +31,7 @@ repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
 util_path = f"{repo_path}/utils/"
 [sys.path.append(path) for path in [util_path]]
 
-import constants, toolbox
+from utils import constants, toolbox
 
 # %% Define the years of interest
 years = np.arange(2020, 2021)

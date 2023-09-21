@@ -3,7 +3,7 @@
 """
 Created on Tue Jun 13 10:57:33 2023
 
-Script to test handling of a single track. Deprecated example.
+Script to test handling of a single track
 
 @author: mgomezd1
 """
@@ -12,23 +12,14 @@ Script to test handling of a single track. Deprecated example.
 
 # OS and IO
 import os
+
 import sys
 import matplotlib.pyplot as plt
 
 # Backend Libraries
 import xarray as xr
 
-# Retrieve Repository Path
-repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
-
-# In order to load functions from scripts located elsewhere in the repository
-# it's better to add their path to the list of directories the system will
-# look for modules in. We'll add the paths for scripts of interest here.
-util_path = f"{repo_path}/utils/"
-[sys.path.append(path) for path in [util_path]]
-
-import toolbox
-
+from utils import toolbox
 
 full_data = toolbox.read_hist_track_file()
 # %%

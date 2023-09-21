@@ -22,7 +22,7 @@ import xarray as xr
 import xesmf as xe
 
 # TCBench Libraries
-import constants
+from utils import constants
 
 # Retrieve Repository Path
 repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])

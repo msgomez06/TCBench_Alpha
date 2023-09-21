@@ -25,12 +25,6 @@ import cartopy.crs as ccrs
 # Retrieve Repository Path
 repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
 
-# In order to load functions from scripts located elsewhere in the repository
-# it's better to add their path to the list of directories the system will
-# look for modules in. We'll add the paths for scripts of interest here.
-util_path = f"{repo_path}/utils/"
-[sys.path.append(path) for path in [util_path]]
-
 from utils import constants, toolbox
 
 # %% Define the years of interest

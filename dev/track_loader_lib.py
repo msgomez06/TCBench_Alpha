@@ -21,11 +21,10 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import cartopy.crs as ccrs
+from utils import constants, toolbox
 
 # Retrieve Repository Path
 repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
-
-from utils import constants, toolbox
 
 # %% Define the years of interest
 years = np.arange(2020, 2021)

@@ -33,7 +33,9 @@ track = toolbox.tc_track(
     timestamps=katrina.ISO_TIME.to_numpy(),
 )
 # %%
-data_path = "/work/FAC/FGSE/IDYST/tbeucler/default/saranya/Data/ECMWF/ERA5_25kmx3hr/mslp/mslp_2005.nc"
+data_path = (
+    "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/" + "mslp/mslp_2005.nc"
+)
 
 meteo_data = xr.open_dataset(data_path)
 

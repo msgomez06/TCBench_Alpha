@@ -16,6 +16,7 @@ import sys
 import glob
 import matplotlib.pyplot as plt
 
+
 # Backend Libraries
 import numpy as np
 import xarray as xr
@@ -61,7 +62,7 @@ assert np.all(
 variable = "mslp"
 
 # Define the path to the data
-data_path = f"/work/FAC/FGSE/IDYST/tbeucler/default/saranya/Data/ECMWF/ERA5_25kmx3hr/{variable}/"
+data_path = f"/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/{variable}/"
 
 # Generate a list of paths to the data
 paths = [f"{data_path}*{variable}*{year}*.nc" for year in years]
@@ -111,7 +112,7 @@ for idx, uid in enumerate(track_data[uidx].unique()):
             timestamps=data[t].to_numpy(),
         )
     )
-
+"""
     track_list[-1].add_var_from_dataset(
         circum_points=5, data=ds, resolution=1, masktype="rect"
     )
@@ -119,11 +120,11 @@ for idx, uid in enumerate(track_data[uidx].unique()):
     track_list[-1].add_var_from_dataset(
         data=ds, resolution=1, masktype="rad", radius=500
     )
-
+"""
 # %%
 if __name__ == "__main__":
     skip_step = 4
-    for track in track_list:
+    for track in track_list[:2]:
         # track.rect_ds.isel(time=0).var151.plot.imshow(ax=ax,
         #                                         alpha=0.25,)
         vmin = track.rad_ds.var151.min().values

@@ -147,6 +147,11 @@ ibtracs_cols = track_cols(  # Storm ID number
     # Coordinates
     LAT=np.float16,
     LON=np.float16,
+    # US Automated Tropical Cyclone Forecasting System ID
+    USA_ATCF_ID=str,
+    # Intensity and Pressure
+    WMO_WIND=float,
+    WMO_PRES=float,
     # Metadata for constructing track objects
     __META={
         "UID": "SID",

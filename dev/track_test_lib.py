@@ -21,11 +21,12 @@ import xarray as xr
 
 from utils import toolbox
 
-full_data = toolbox.read_hist_track_file()
+# full_data = toolbox.read_hist_track_file()
 # %%
 data_2005 = full_data[full_data.ISO_TIME.dt.year == 2005]
 katrina = data_2005[data_2005.NAME == "KATRINA"]
 
+# %%
 track = toolbox.tc_track(
     UID=katrina.SID.iloc[0],
     NAME=katrina.NAME.iloc[0],

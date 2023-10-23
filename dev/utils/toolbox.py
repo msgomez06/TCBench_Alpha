@@ -340,13 +340,7 @@ def sanitize_timestamps(timestamps, data):
 
 # Class presenting each track type
 class tc_track:
-    def __init__(
-        self,
-        UID,
-        NAME,
-        track,
-        timestamps,
-    ):
+    def __init__(self, UID, NAME, track, timestamps, **kwargs):
         try:
             assert isinstance(
                 UID, str
@@ -368,11 +362,30 @@ class tc_track:
             self.name = NAME
             self.track = (track,)
             self.timestamps = timestamps
+
+            #
+
         except Exception as e:
             print(
                 f"Encountered and exception when instiating a tc_track object: \n{e}\n"
             )
             print(traceback.format_exc())
+
+    def add_trackdata(
+        self,
+        var_dict: dict,
+    ):
+        """
+        Function to add additional track data to the track object
+
+        Parameters
+        ----------
+        var_dict : dict, required
+            Dictionary containing the variable name as the key and the
+            variable data as the value
+        """
+        for var, data in var_dict.items():
+            self.__setattr__(var, data)
 
     def get_radmask(self, point, **kwargs):
         # read in parameters if submitted, otherwise use defaults

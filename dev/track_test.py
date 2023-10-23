@@ -3,7 +3,7 @@
 """
 Created on Tue Jun 13 10:57:33 2023
 
-Script to test handling of a single track. Deprecated example.
+Script to test handling of a single track
 
 @author: mgomezd1
 """
@@ -12,29 +12,21 @@ Script to test handling of a single track. Deprecated example.
 
 # OS and IO
 import os
+
 import sys
 import matplotlib.pyplot as plt
 
 # Backend Libraries
 import xarray as xr
 
-# Retrieve Repository Path
-repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
+from utils import toolbox
 
-# In order to load functions from scripts located elsewhere in the repository
-# it's better to add their path to the list of directories the system will
-# look for modules in. We'll add the paths for scripts of interest here.
-util_path = f"{repo_path}/utils/"
-[sys.path.append(path) for path in [util_path]]
-
-import toolbox
-
-
-full_data = toolbox.read_hist_track_file()
+# full_data = toolbox.read_hist_track_file()
 # %%
 data_2005 = full_data[full_data.ISO_TIME.dt.year == 2005]
 katrina = data_2005[data_2005.NAME == "KATRINA"]
 
+# %%
 track = toolbox.tc_track(
     UID=katrina.SID.iloc[0],
     NAME=katrina.NAME.iloc[0],
@@ -42,7 +34,9 @@ track = toolbox.tc_track(
     timestamps=katrina.ISO_TIME.to_numpy(),
 )
 # %%
-data_path = "/work/FAC/FGSE/IDYST/tbeucler/default/saranya/Data/ECMWF/ERA5_25kmx3hr/mslp/mslp_2005.nc"
+data_path = (
+    "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/" + "mslp/mslp_2005.nc"
+)
 
 meteo_data = xr.open_dataset(data_path)
 

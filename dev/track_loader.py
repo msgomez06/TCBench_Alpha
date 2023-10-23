@@ -3,7 +3,7 @@
 """
 Created on Tue Jun 13 10:57:33 2023
 
-Script to develop multi-track handling. Before package __init__ structure - deprected example
+Script to develop multi-track handling. 
 
 @author: mgomezd1
 """
@@ -16,22 +16,16 @@ import sys
 import glob
 import matplotlib.pyplot as plt
 
+
 # Backend Libraries
 import numpy as np
 import xarray as xr
 import pandas as pd
 import cartopy.crs as ccrs
+from utils import constants, toolbox
 
 # Retrieve Repository Path
 repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
-
-# In order to load functions from scripts located elsewhere in the repository
-# it's better to add their path to the list of directories the system will
-# look for modules in. We'll add the paths for scripts of interest here.
-util_path = f"{repo_path}/utils/"
-[sys.path.append(path) for path in [util_path]]
-
-import constants, toolbox
 
 # %% Define the years of interest
 years = np.arange(2020, 2021)
@@ -68,7 +62,7 @@ assert np.all(
 variable = "mslp"
 
 # Define the path to the data
-data_path = f"/work/FAC/FGSE/IDYST/tbeucler/default/saranya/Data/ECMWF/ERA5_25kmx3hr/{variable}/"
+data_path = f"/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/{variable}/"
 
 # Generate a list of paths to the data
 paths = [f"{data_path}*{variable}*{year}*.nc" for year in years]
@@ -118,7 +112,7 @@ for idx, uid in enumerate(track_data[uidx].unique()):
             timestamps=data[t].to_numpy(),
         )
     )
-
+"""
     track_list[-1].add_var_from_dataset(
         circum_points=5, data=ds, resolution=1, masktype="rect"
     )
@@ -126,11 +120,11 @@ for idx, uid in enumerate(track_data[uidx].unique()):
     track_list[-1].add_var_from_dataset(
         data=ds, resolution=1, masktype="rad", radius=500
     )
-
+"""
 # %%
 if __name__ == "__main__":
     skip_step = 4
-    for track in track_list:
+    for track in track_list[:2]:
         # track.rect_ds.isel(time=0).var151.plot.imshow(ax=ax,
         #                                         alpha=0.25,)
         vmin = track.rad_ds.var151.min().values

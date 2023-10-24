@@ -150,8 +150,8 @@ ibtracs_cols = track_cols(  # Storm ID number
     # US Automated Tropical Cyclone Forecasting System ID
     USA_ATCF_ID=str,
     # Intensity and Pressure
-    WMO_WIND=float,
-    WMO_PRES=float,
+    WMO_WIND=str,
+    WMO_PRES=str,
     # Metadata for constructing track objects
     __META={
         "UID": "SID",
@@ -160,6 +160,7 @@ ibtracs_cols = track_cols(  # Storm ID number
         "X_coord": "LON",
         "TIME_coord": "ISO_TIME",
         "loader": pd.read_csv,
+        "ALT_ID": "USA_ATCF_ID",
     },
 )
 

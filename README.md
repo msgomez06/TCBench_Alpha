@@ -43,5 +43,5 @@ TCBench is in its initial stages, so it's currently not meant to be installed. T
 └── tracks
 ```
 `\dev` contains all of the python scripts that you will need to test out TCBench's data preprocessing.  
-`\dev\utils\constants.py` holds reference values for the operations carried out by TCBench. This includes classes describing the tracks provided by, e.g., IBTrACS, which facilitate track processing.
+`\dev\utils\constants.py` holds reference values for the operations carried out by TCBench. This includes classes describing the tracks provided by, e.g., IBTrACS, which facilitate track processing.  
 `\dev\utils\toolbox.py` includes functions and classes used to process the tracks. Of note is the tc_track class, which is the current cornerstone of TCBench. 

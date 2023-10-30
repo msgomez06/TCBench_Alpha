@@ -470,6 +470,7 @@ class tc_track:
 
         # Generate grid
         ll_gridder(**kwargs)
+        num_levels = kwargs.get("num_levels", 1)
 
         mask = None
 
@@ -477,6 +478,8 @@ class tc_track:
             point = self.track[0][self.timestamps == stamp][0]
 
             temp_mask = get_mask(point, **kwargs)
+            if num_levels > 1:
+                temp_mask = np.tile(temp_mask, (num_levels, 1, 1))[np.newaxis, :, :, :]
 
             if mask is None:
                 mask = temp_mask
@@ -559,6 +562,7 @@ class tc_track:
             # 2005-08-29 11:10:00, 2005-08-29 14:45:00
             valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
             data_steps = data.sel(time=valid_steps)
+            attrs = data_steps.attrs
 
             # Generate lat and lot vectors
             lat_vector, lon_vector = axis_generator(**kwargs)
@@ -582,7 +586,10 @@ class tc_track:
             )
             data_steps = regridder(data_steps)
             mask = self.get_mask_series(valid_steps, **kwargs)
+
             data_steps = data_steps.where(mask)
+            data_steps.attrs = attrs
+
             setattr(self, f"{ds_type}_{level_type}_ds", data_steps)
 
             data_steps.to_netcdf(

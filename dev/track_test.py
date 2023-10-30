@@ -36,16 +36,17 @@ track = toolbox.tc_track(
 )
 # %%
 data_path = (
-    "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/" + "mslp/mslp_2005.nc"
+    "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/" + "gpot/gpot_2005.nc"
 )
 
 meteo_data = xr.open_dataset(data_path)
 
 # %%
 track.add_var_from_dataset(
-    radius=1500,
+    radius=500,
     data=meteo_data,
-    resolution=10,
+    resolution=0.25,
+    num_levels=1 if len(meteo_data.dims) == 3 else meteo_data.dims["plev"],
 )
 
 # %%
@@ -63,7 +64,7 @@ for i in range(0, 61, 5):
 vmin = plot_test.var34.min()
 vmax = plot_test.var34.max()
 
-for i in range(0, 61, 5):
+for i in range(0, 61):
     plt.figure(dpi=150)
     plot_test.isel(time=i).var34.plot.imshow(vmin=vmin, vmax=vmax)
     plt.show()

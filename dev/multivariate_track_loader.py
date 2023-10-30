@@ -64,39 +64,6 @@ track_data[track_data["BASIN"] == basin]
 
 # Assert there is at least one track in the basin
 assert len(track_data) > 0, f"No tracks found in {basin} basin"
-
-# %% Data laoding with xarray
-
-# Define the variable of interest
-variable = "mslp"
-
-# Define the path to the data
-data_path = f"/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/{variable}/"
-
-# Generate a list of paths to the data
-paths = [f"{data_path}*{variable}*{year}*.nc" for year in years]
-
-# Check if each file exists
-for idx, path in enumerate(paths):
-    assert len(glob.glob(path)) == 1, f"{variable} file for {years[idx]} not found"
-
-ds = None
-
-# loading arguments for xr.open_mfdataset
-kwargs = {
-    "combine": "by_coords",
-    "parallel": True,
-    "preprocess": None,
-    "engine": "netcdf4",
-    "chunks": {"time": 300, "latitude": 100, "longitude": 100},
-}
-
-for path in paths:
-    print(f"Loading {path}...")
-    if ds is None:
-        ds = xr.open_mfdataset(path, **kwargs)
-    else:
-        ds = xr.concat([ds, xr.open_mfdataset(path, **kwargs)], dim="time")
 # %%
 # Load the keys from the track data metadata
 uidx = cols._track_cols__metadata["UID"]
@@ -109,9 +76,20 @@ track_list = []
 
 num_trax = len(track_data[uidx].unique())
 
+# Define the variable of interest
+variables = [
+    "mslp",  # mean sea level pressure
+    "uwnd",  # 10m u wind
+    "vwnd",  # 10m v wind
+    "sst",  # sea surface temperature
+    "svars",  # surface variables
+    "radvars",  # radiative variables
+]
+
 # Build the track list
 for idx, uid in enumerate(track_data[uidx].unique()):
-    print("\r Calculating track", uid, f" {(idx+1)/(num_trax):<5.1%}", end="")
+    print("Calculating track", uid, f" {(idx+1)/(num_trax):<5.1%}")
+
     data = track_data.loc[track_data[uidx] == uid]
     track_list.append(
         toolbox.tc_track(
@@ -121,17 +99,61 @@ for idx, uid in enumerate(track_data[uidx].unique()):
             timestamps=data[t].to_numpy(),
         )
     )
-"""
-    track_list[-1].add_var_from_dataset(
-        circum_points=5, data=ds, resolution=1, masktype="rect"
-    )
 
-    track_list[-1].add_var_from_dataset(
-        data=ds, resolution=1, masktype="rad", radius=500
-    )
-"""
+    # Data laoding with xarray
+    for var in variables:
+        # Define the path to the data
+        data_path = f"/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/{var}/"
+
+        # Generate a list of paths to the data
+        paths = [f"{data_path}*{var}*{year}*.nc" for year in years]
+
+        # Check if each file exists
+        for idx, path in enumerate(paths):
+            assert len(glob.glob(path)) == 1, f"{var} file for {years[idx]} not found"
+
+        ds = None
+
+        # loading arguments for xr.open_mfdataset
+        kwargs = {
+            "combine": "by_coords",
+            "parallel": True,
+            "preprocess": None,
+            "engine": "netcdf4",
+            "chunks": {"time": 300, "latitude": 100, "longitude": 100},
+        }
+
+        for path in paths:
+            print(f"Loading {path}...")
+            if ds is None:
+                ds = xr.open_mfdataset(path, **kwargs)
+            else:
+                ds = xr.concat([ds, xr.open_mfdataset(path, **kwargs)], dim="time")
+
+        if "lev" in ds.dims:
+            ds = ds.isel(lev=0)
+
+        print(f"Adding {var} to track {uid} in rect form")
+        track_list[-1].add_var_from_dataset(
+            circum_points=20,
+            data=ds,
+            resolution=0.25,
+            masktype="rect",
+            num_levels=1 if len(ds.dims) == 3 else ds.dims["plev"],
+        )
+        print("Done!")
+        print(f"Adding {var} to track {uid} in rad form")
+        track_list[-1].add_var_from_dataset(
+            data=ds,
+            resolution=0.25,
+            masktype="rad",
+            radius=500,
+            num_levels=1 if len(ds.dims) == 3 else ds.dims["plev"],
+        )
+        print("Done!")
+        ds.close()
 # %%
-if __name__ == "__main__":
+if __name__ == "skip":  # "__main__":
     skip_step = 4
     for track in track_list[:2]:
         # track.rect_ds.isel(time=0).var151.plot.imshow(ax=ax,

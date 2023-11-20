@@ -161,6 +161,7 @@ def var_loader(track, variables, years):
 
 
 # %% Parallel processing of tracks using joblib
+"""
 toaster = True
 
 jl.Parallel(
@@ -168,39 +169,72 @@ jl.Parallel(
     verbose=10,
     prefer="threads",
 )(jl.delayed(var_loader)(track, variables, years) for track in track_list)
+"""
 
+for track in track_list[:2]:
+    var_loader(track, variables, years)
 
 # %%
-if __name__ == "skip":  # "__main__":
+if __name__ == "__main__":
     skip_step = 4
     for track in track_list[:2]:
         # track.rect_ds.isel(time=0).var151.plot.imshow(ax=ax,
         #                                         alpha=0.25,)
-        vmin = track.rad_ds.var151.min().values
-        vmax = track.rad_ds.var151.max().values
+        graphDS = (
+            track.rect_M_ds.isel(plev=-1).var131 ** 2
+            + track.rect_M_ds.isel(plev=-1).var132 ** 2
+        ) ** 0.5
+        # graphDS = track.rect_S_ds.var34
 
-        time = pd.to_datetime(track.rect_ds.time.isel(time=0).values).strftime(
-            "%Y.%m.%d"
-        )
+        vmin = graphDS.min().values
+        vmax = graphDS.max().values
 
-        fig = plt.figure(dpi=300)
+        time = pd.to_datetime(graphDS.time.isel(time=0).values).strftime("%Y.%m.%d")
+
+        fig = plt.figure(dpi=300, figsize=(10, 5))
         ax = plt.axes(projection=ccrs.PlateCarree())
-        ax.set_title("Mean Sea Level Pressure")
-        ax.coastlines()
-        fig.suptitle(f"{track.name} {time} Radial Data")
-        for timestamp in track.rad_ds.time[::skip_step]:
-            temp_data = track.rad_ds.sel(time=timestamp).var151.plot.imshow(
+        fig.suptitle("Wind Vector (1000hPa)")
+        ax.stock_img()
+        ax.set_title(f"{track.name} {time} Rectangular Data")
+        for timestamp in graphDS.time[::skip_step]:
+            temp_data = graphDS.sel(time=timestamp).plot.imshow(
                 ax=ax,
                 vmin=vmin,
                 vmax=vmax,
                 transform=ccrs.PlateCarree(),
                 alpha=0.33,
                 add_colorbar=False,
+                add_labels=False,
+            )
+
+        for timestamp in graphDS.time:
+            # select the data that isn't nan
+            temp_data = graphDS.sel(time=timestamp).where(
+                ~np.isnan(graphDS.sel(time=timestamp)), drop=True
+            )
+
+            printtime = pd.to_datetime(timestamp.time.values).strftime("%Y.%m.%d-%H")
+
+            # plot the data as a simple imshow
+            new_fig = plt.figure(dpi=300, figsize=(6, 5))
+            new_fig.suptitle("Wind Vector (1000hPa)")
+            new_ax = plt.axes()
+            new_ax.set_box_aspect(1)
+            new_ax.set_title(f"{track.name} {printtime}h Rectangular Data")
+            temp_data.plot.imshow(
+                ax=new_ax,
+                vmin=vmin,
+                vmax=vmax,
+                # transform=ccrs.PlateCarree(),
+                alpha=1,
+                add_colorbar=True,
+                add_labels=False,
             )
 
         plt.show()
         plt.close()
 
+        """
         fig = plt.figure(dpi=300)
         ax = plt.axes(projection=ccrs.PlateCarree())
         ax.set_title("Mean Sea Level Pressure")
@@ -218,6 +252,6 @@ if __name__ == "skip":  # "__main__":
 
         plt.show()
         plt.close()
-
+        """
 
 # %%

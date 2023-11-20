@@ -88,7 +88,7 @@ variables = [
     "svars",  # surface variables
     "radvars",  # radiative variables
 ]
-
+# %%
 # Build the track list
 for idx, uid in enumerate(track_data[uidx].unique()):
     print("Calculating track", uid, f" {(idx+1)/(num_trax):<5.1%}")
@@ -103,6 +103,9 @@ for idx, uid in enumerate(track_data[uidx].unique()):
         )
     )
 
+
+# %%
+def var_loader(track, variables, years):
     # Data laoding with xarray
     for var in variables:
         # Define the path to the data
@@ -136,8 +139,8 @@ for idx, uid in enumerate(track_data[uidx].unique()):
         if "lev" in ds.dims:
             ds = ds.isel(lev=0)
 
-        print(f"Adding {var} to track {uid} in rect form")
-        track_list[-1].add_var_from_dataset(
+        print(f"Adding {var} to track {track.uid} in rect form")
+        track.add_var_from_dataset(
             circum_points=20,
             data=ds,
             resolution=0.25,
@@ -145,8 +148,8 @@ for idx, uid in enumerate(track_data[uidx].unique()):
             num_levels=1 if len(ds.dims) == 3 else ds.dims["plev"],
         )
         print("Done!")
-        print(f"Adding {var} to track {uid} in rad form")
-        track_list[-1].add_var_from_dataset(
+        print(f"Adding {var} to track {track.uid} in rad form")
+        track.add_var_from_dataset(
             data=ds,
             resolution=0.25,
             masktype="rad",
@@ -155,6 +158,18 @@ for idx, uid in enumerate(track_data[uidx].unique()):
         )
         print("Done!")
         ds.close()
+
+
+# %% Parallel processing of tracks using joblib
+toaster = True
+
+jl.Parallel(
+    n_jobs=jl.cpu_count() if toaster else int(jl.cpu_count() / 2),
+    verbose=10,
+    prefer="threads",
+)(jl.delayed(var_loader)(track, variables, years) for track in track_list)
+
+
 # %%
 if __name__ == "skip":  # "__main__":
     skip_step = 4

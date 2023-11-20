@@ -583,6 +583,7 @@ class tc_track:
                 data_steps,
                 casting_array,
                 "bilinear",
+                parallel=True,
             )
             data_steps = regridder(data_steps)
             mask = self.get_mask_series(valid_steps, **kwargs)
@@ -631,6 +632,7 @@ class tc_track:
                     var_steps,
                     casting_array,
                     "bilinear",
+                    parallel=True,
                 )
                 var_steps = regridder(var_steps)
                 var_steps = var_steps.where(mask)

@@ -1,6 +1,9 @@
 # TCBench - Alpha Repository
  
-Welcome to TCBench, our platform and benchmark dataset for data-driven tropical cyclone studies. For more information on how to use the repository, please [check out the GitHub Wiki](https://github.com/msgomez06/alpha_bench/wiki).
+Welcome to TCBench, our platform and benchmark dataset for data-driven tropical cyclone studies. For more information on how to use the repository, please [check out the GitHub Wiki](https://github.com/msgomez06/TCBench_Alpha/wiki).
+
+Graphical Summary of TCBench:
+![TCBench Graphical Summary](https://github.com/msgomez06/TCBench_Alpha/blob/main/Figure_Summary.png?raw=True)
 
 ## Background
 

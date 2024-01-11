@@ -23,7 +23,8 @@ import xarray as xr
 import xesmf as xe
 
 # TCBench Libraries
-from utils import constants
+try: from utils import constants
+except: import constants
 
 # Retrieve Repository Path
 repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
@@ -660,3 +661,5 @@ class tc_track:
 
             # remove the var_list attribute
             delattr(self, "var_list")
+
+# %%

@@ -82,11 +82,11 @@ num_trax = len(track_data[uidx].unique())
 # Define the variable of interest
 variables = [
     "mslp",  # mean sea level pressure
-    "uwnd",  # 10m u wind
-    "vwnd",  # 10m v wind
+    # "uwnd",  # 10m u wind
+    # "vwnd",  # 10m v wind
     "sst",  # sea surface temperature
-    "svars",  # surface variables
-    "radvars",  # radiative variables
+    # "svars",  # surface variables
+    # "radvars",  # radiative variables
 ]
 # %%
 # Build the track list
@@ -143,7 +143,7 @@ def var_loader(track, variables, years):
         track.add_var_from_dataset(
             circum_points=20,
             data=ds,
-            resolution=0.25,
+            resolution=5,
             masktype="rect",
             num_levels=1 if len(ds.dims) == 3 else ds.dims["plev"],
         )
@@ -151,7 +151,7 @@ def var_loader(track, variables, years):
         print(f"Adding {var} to track {track.uid} in rad form")
         track.add_var_from_dataset(
             data=ds,
-            resolution=0.25,
+            resolution=5,
             masktype="rad",
             radius=500,
             num_levels=1 if len(ds.dims) == 3 else ds.dims["plev"],

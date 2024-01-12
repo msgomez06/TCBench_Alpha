@@ -192,6 +192,19 @@ reunion_track_cols = track_cols(  # Storm Season
     },
 )
 
+# %% Folder Structure Long Names
+# The folder dictionary is used to expand the folder names to their full
+# names. This is useful for the user to understand what the folder names
+# mean.
+# The ERA5 folder structure is organized by single level, pressure level, and
+# calculated values.
+data_store_names = {
+    "SL": "Surface / Single Level",
+    "PL": "Pressure Level",
+    "CV": "Calculated Values",
+}
+
+
 # %% PRIMED Metadata
 # Questions for developers:
 # Why are the files organized by these basins but the metadata includes
@@ -213,6 +226,8 @@ primed_basins = set(
 # the dictionary return by the year should be called using the .get() method.
 # e.g., psn[study_year].get(STORM_ID, 'Unnamed')
 # Primed Storm Names abbreviated to psn
+# UPDATE: - No longer using this dictionary. Primed uses the ATCF ID as the
+#           storm ID, so we can use the ATCF ID to get the storm name.
 psn = {
     2000: {
         3: "Alberto",

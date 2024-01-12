@@ -15,6 +15,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib
+
+# TCBench Libraries
+try:
+    from utils import constants
+except:
+    import constants
 
 default = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 
@@ -103,7 +110,7 @@ class Data_Collection:
 
         # Convert the booleans to integers
         df = df.astype(int)
-
+        df.sort_index(inplace=True)
         return df
 
     # Function to print the availability of variables
@@ -112,12 +119,18 @@ class Data_Collection:
             self, "meta_dfs"
         ), "The data collection object has not been properly initialized."
 
-        save_image = kwargs.get("save_image", False)
         save_path = kwargs.get("save_path", None)
 
-        assert (save_image and save_path) or (
-            not save_image and not save_path
-        ), "If save_image is True, save_path must be specified."
+        assert (save_path is None) or (
+            os.path.isdir(save_path)
+        ), "Invalid image save_path - make sure the path exists."
+
+        matplotlib.rc(
+            "xtick", labelsize=kwargs.get("tick_label_size", 6)
+        )  # fontsize of the tick labels
+        matplotlib.rc(
+            "ytick", labelsize=kwargs.get("tick_label_size", 6)
+        )  # fontsize of the tick labels
 
         for key in dc.meta_dfs.keys():
             # Create a colormap
@@ -126,23 +139,73 @@ class Data_Collection:
                 + (list(plt.cm.tab20c.colors) * 10)[: len(dc.meta_dfs[key].index)]
             )
             norm = mcolors.Normalize(vmin=-0.5, vmax=len(dc.meta_dfs[key].index) + 0.5)
-            fig, ax = plt.subplots()
-            ax.matshow(
+
+            # Create the figure
+            fig, ax = plt.subplots(
+                dpi=kwargs.get("dpi", 300),
+            )
+
+            # Set the title using the key
+            fig.suptitle(
+                f"Variable Availability for {constants.data_store_names.get(key, key)}"
+            )
+            # Plot the availability matrix
+            ax.imshow(
                 dc.meta_dfs[key].to_numpy()
                 * (np.arange(0, len(dc.meta_dfs[key].index)) + 1).reshape(-1, 1),
                 cmap=cmap,
                 norm=norm,
             )
+
+            # Set aspect ratio according to the number of variables and years
+            aspect_ratio = (
+                len(dc.meta_dfs[key].index) / len(dc.meta_dfs[key].columns)
+                if dc.meta_dfs[key].columns.any() and dc.meta_dfs[key].index.any()
+                else 1
+            )
+            ax.set_box_aspect(aspect_ratio)
+
+            # Set the tick labels
             ax.set_yticks(np.arange(0, len(dc.meta_dfs[key].index)))
             ax.set_xticks(np.arange(0, len(dc.meta_dfs[key].columns)))
             ax.set_xticklabels(
                 dc.meta_dfs[key].columns, rotation="vertical", ha="center"
             )
             ax.set_yticklabels(dc.meta_dfs[key].index)
+
+            # tight layout
+            fig.tight_layout()
+            fig.subplots_adjust(left=0.35)
+
+            if save_path is not None:
+                fig.savefig(save_path + key + ".png")
+
             plt.show()
 
-            if save_image:
-                plt.savefig(save_path + key + ".png")
+        def retrieve_ds(
+            self,
+            vars: list,
+            years: list,
+        ):
+            assert hasattr(
+                self, "meta_dfs"
+            ), "The data collection object has not been properly initialized."
+
+            # Initialize list of files for multi-file dataset
+            file_list = []
+
+            # Check that the variables are available
+            for var in vars:
+                # Check that the variable is available
+                assert (
+                    var in self.meta_dfs.keys()
+                ), f"{var} is not available variable type. Aborting data load operation."
+
+                # and that the years are available
+                for year in years:
+                    assert (
+                        year in self.meta_dfs[var].columns
+                    ), f"{year} is not available for {var}. Aborting data load operation."
 
 
 # %% Functions
@@ -155,24 +218,5 @@ if __name__ == "__main__":
 
     # # Test the variable availability function
     dc.variable_availability()
-
-    # for key in dc.meta_dfs.keys():
-    #     # Create a colormap
-    #     cmap = mcolors.ListedColormap(
-    #         ["black"] + (list(plt.cm.tab20c.colors) * 10)[: len(dc.meta_dfs[key].index)]
-    #     )
-    #     norm = mcolors.Normalize(vmin=-0.5, vmax=len(dc.meta_dfs[key].index) + 0.5)
-    #     fig, ax = plt.subplots()
-    #     ax.matshow(
-    #         dc.meta_dfs[key].to_numpy()
-    #         * (np.arange(0, len(dc.meta_dfs[key].index)) + 1).reshape(-1, 1),
-    #         cmap=cmap,
-    #         norm=norm,
-    #     )
-    #     ax.set_yticks(np.arange(0, len(dc.meta_dfs[key].index)))
-    #     ax.set_xticks(np.arange(0, len(dc.meta_dfs[key].columns)))
-    #     ax.set_xticklabels(dc.meta_dfs[key].columns, rotation="vertical", ha="center")
-    #     ax.set_yticklabels(dc.meta_dfs[key].index)
-    #     plt.show()
 
 # %%

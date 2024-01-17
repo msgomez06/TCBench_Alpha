@@ -16,6 +16,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib
+import xarray as xr
+import metpy.calc as mpcalc
+import metpy.units as mpunits
 
 # TCBench Libraries
 try:
@@ -89,6 +92,15 @@ class Data_Collection:
             global_year_list += avail_years
             var_dictionary[var] = sorted(avail_years)
         global_year_list = sorted(list(set(global_year_list)))
+        print(global_year_list)
+        if global_year_list == []:
+            print("No files found in " + var_path)
+        else:
+            global_year_list = [int(yr) for yr in set(global_year_list)]
+            global_year_list = np.arange(
+                min(global_year_list), max(global_year_list) + 1
+            ).astype(str)
+        print(global_year_list)
 
         if hasattr(self, "meta_dfs"):
             self.meta_dfs[var_type] = self._check_availability(
@@ -182,30 +194,135 @@ class Data_Collection:
 
             plt.show()
 
-        def retrieve_ds(
-            self,
-            vars: list,
-            years: list,
-        ):
-            assert hasattr(
-                self, "meta_dfs"
-            ), "The data collection object has not been properly initialized."
+    def retrieve_ds(self, vars: list, years: list, **kwargs):
+        assert hasattr(
+            self, "meta_dfs"
+        ), "The data collection object has not been properly initialized."
 
-            # Initialize list of files for multi-file dataset
-            file_list = []
+        # check that the vars are a list or a string
+        assert isinstance(vars, list) or isinstance(
+            vars, str
+        ), "vars must be a list or a string"
 
-            # Check that the variables are available
-            for var in vars:
-                # Check that the variable is available
+        # check if the variables are a list, else make it a list
+        if not isinstance(vars, list):
+            vars = [vars]
+
+        # check that the years are an int or a list
+        assert isinstance(years, int) or isinstance(
+            years, list
+        ), "years must be an int or a list"
+
+        # check if the years are a list, else make it a list
+        if not isinstance(years, list):
+            years = [years]
+
+        # Initialize list of files for multi-file dataset
+        file_list = []
+
+        # Check that the variables are available
+        for var in vars:
+            # Assert that the variable is a string
+            assert isinstance(
+                var, str
+            ), f"Variable {var} is not a string. Aborting data load operation."
+
+            # Check that the variable is available in one of the groups. If not available
+            # or available in more than one group, abort the data load operation
+            group = None
+            for key in self.meta_dfs.keys():
+                if var in self.meta_dfs[key].index:
+                    if group is None:
+                        group = key
+                    else:
+                        raise ValueError(
+                            f"{var} is available in more than one group. Aborting data load operation."
+                        )
+            assert (
+                group is not None
+            ), f"{var} is not available in any of the groups. Aborting data load operation."
+
+            # and check that the years are available
+            for year in years:
+                # Assert that the year is an integer
+                assert isinstance(
+                    year, int
+                ), f"Year {year} is not an integer. Aborting data load operation."
+
                 assert (
-                    var in self.meta_dfs.keys()
-                ), f"{var} is not available variable type. Aborting data load operation."
+                    self.meta_dfs[group].loc[var].loc[str(year)] == 1
+                ), f"{year} is not available for {var}. Aborting data load operation."
 
-                # and that the years are available
-                for year in years:
-                    assert (
-                        year in self.meta_dfs[var].columns
-                    ), f"{year} is not available for {var}. Aborting data load operation."
+                file_list.append(
+                    os.path.join(
+                        self.data_path,
+                        group,
+                        var,
+                        f"{kwargs.get('prefix', 'ERA5')}_{year}_{var}.{kwargs.get('file_type', 'nc')}",
+                    )
+                )
+
+        # Load the dataset
+        ds = kwargs.get("data_loader", xr.open_mfdataset)(
+            file_list, **kwargs.get("data_loader_kwargs", {})
+        )
+
+        return ds
+
+    def calculate_field(
+        self,
+        function: callable,
+        argument_names: dict,
+        years,
+        **kwargs,
+    ):
+        """
+        This function calculates a field using the given function and
+        the given variables. It calculates and saves the field for the
+        requested years. If the field is already available the function
+        will not calculate the field again.
+
+        Parameters
+        ----------
+        function : callable
+            The function used to calculate the value
+        argument_names : dict
+            The argument names for the function, with the argument names as keys
+            and the variable names as values
+        years : list
+
+        Returns
+        -------
+        None or xarray.Dataset
+        """
+        # Check if the function is a metpy callable
+        if hasattr(mpcalc, function.__name__):
+            # if it is, check that the required units are passed as kwargs
+            assert (
+                "units" in kwargs.keys()
+            ), f"Units are required for {function.__name__} since it's a metpy function."
+
+        # check that the argument names are a dict
+        assert isinstance(
+            argument_names, dict
+        ), "argument_names must be a dict mapping argument names to variable names"
+
+        # check that the years are an int or a list
+        assert isinstance(years, int) or isinstance(
+            years, list
+        ), "years must be an int or a list"
+
+        # get list of variables
+        var_list = list(argument_names.values())
+
+        # check if pressure is in the variable names
+        if "pressure" in var_list:
+            print(
+                "Pressure detected in the argument names. "
+                "Since pressure is a coordinate variable, it will be "
+                "taken from the dataset coordinates."
+            )
+            var_list.remove("pressure")
 
 
 # %% Functions
@@ -216,7 +333,20 @@ if __name__ == "__main__":
     # Test running the data collection class
     dc = Data_Collection(default)
 
-    # # Test the variable availability function
-    dc.variable_availability()
+    # Test the variable availability function
+    dc.variable_availability(
+        save_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+    )
 
+    # Test the retrieve_ds function
+    print(
+        dc.retrieve_ds(
+            [
+                "10m_u_component_of_wind",
+                "mean_sea_level_pressure",
+                "u_component_of_wind",
+            ],
+            1999,
+        )
+    )
 # %%

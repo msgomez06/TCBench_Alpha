@@ -19,6 +19,7 @@ import matplotlib
 import xarray as xr
 import metpy.calc as mpcalc
 import metpy.units as mpunits
+import joblib as jl
 
 # TCBench Libraries
 try:
@@ -220,6 +221,7 @@ class Data_Collection:
         # Initialize list of files for multi-file dataset
         file_list = []
 
+        data_var_dict = {}
         # Check that the variables are available
         for var in vars:
             # Assert that the variable is a string
@@ -261,13 +263,17 @@ class Data_Collection:
                         f"{kwargs.get('prefix', 'ERA5')}_{year}_{var}.{kwargs.get('file_type', 'nc')}",
                     )
                 )
+                if var not in data_var_dict.keys():
+                    data_var_dict[var] = list(xr.open_dataset(file_list[-1]).data_vars)[
+                        0
+                    ]
 
         # Load the dataset
         ds = kwargs.get("data_loader", xr.open_mfdataset)(
             file_list, **kwargs.get("data_loader_kwargs", {})
         )
 
-        return ds
+        return ds, data_var_dict
 
     def calculate_field(
         self,
@@ -287,14 +293,15 @@ class Data_Collection:
         function : callable
             The function used to calculate the value
         argument_names : dict
-            The argument names for the function, with the argument names as keys
-            and the variable names as values
+            The argument names for the function, with the variable names as keys
+            and the argument names as values
         years : list
 
         Returns
         -------
         None or xarray.Dataset
         """
+        # TODO: Handle levels if present
         # Check if the function is a metpy callable
         if hasattr(mpcalc, function.__name__):
             # if it is, check that the required units are passed as kwargs
@@ -305,7 +312,7 @@ class Data_Collection:
         # check that the argument names are a dict
         assert isinstance(
             argument_names, dict
-        ), "argument_names must be a dict mapping argument names to variable names"
+        ), "argument_names must be a dict mapping variable names to argument names"
 
         # check that the years are an int or a list
         assert isinstance(years, int) or isinstance(
@@ -313,16 +320,69 @@ class Data_Collection:
         ), "years must be an int or a list"
 
         # get list of variables
-        var_list = list(argument_names.values())
+        var_list = list(argument_names.keys())
+
+        pressure_bool = "pressure" in var_list
 
         # check if pressure is in the variable names
-        if "pressure" in var_list:
+        if pressure_bool:
             print(
                 "Pressure detected in the argument names. "
                 "Since pressure is a coordinate variable, it will be "
                 "taken from the dataset coordinates."
             )
             var_list.remove("pressure")
+
+        # load the dataset
+        ds, dv_dict = self.retrieve_ds(var_list, years, **kwargs)
+
+        # check if specific levels have been requested
+        if "levels" in kwargs.keys():
+            print("Levels detected in the kwargs. " "Filtering to requested levels.")
+            ds = ds.sel(level=kwargs.get("levels"))
+
+        arg_dict = {}
+        for var in argument_names.keys():
+            arg_dict[argument_names[var]] = (
+                ds[dv_dict[var]] * mpunits.units(kwargs.get("units", {}).get(var, None))
+                if var != "pressure"
+                else ds[kwargs.get("pressure_name", "level")]
+                * mpunits.units(kwargs.get("units", {}).get("pressure", None))
+            )
+
+        # create a temporary dataset to store the calculated field
+        temp_ds = None
+
+        def time_process(dataset, function, step, arg_dict):
+            # calculate the field
+            temp_dict = {}
+            for arg in arg_dict.keys():
+                if arg != "pressure":
+                    temp_dict[arg] = arg_dict[arg].sel(time=step)
+                else:
+                    temp_dict[arg] = arg_dict[arg]
+
+            return function(**temp_dict)
+
+        # use joblib to parallelize the calculation per time step
+        # with as many processes as there are cores
+        job_array = jl.Parallel(n_jobs=-1, verbose=10, backend="threading")(
+            jl.delayed(time_process)(temp_ds, function, i, arg_dict)
+            for i in ds.time.values
+        )
+
+        temp_ds = xr.concat(job_array, dim="time")
+
+        # for dataset in job_array:
+        #     if temp_ds is None:
+        #         temp_ds = dataset.copy()
+        #     else:
+        #         temp_ds = xr.concat([temp_ds, dataset], dim="time")
+        #     del dataset
+        del job_array
+
+        return temp_ds
+        # return function(**arg_dict)
 
 
 # %% Functions
@@ -339,14 +399,22 @@ if __name__ == "__main__":
     )
 
     # Test the retrieve_ds function
-    print(
-        dc.retrieve_ds(
-            [
-                "10m_u_component_of_wind",
-                "mean_sea_level_pressure",
-                "u_component_of_wind",
-            ],
-            1999,
-        )
-    )
+    # ds = dc.retrieve_ds(
+    #         [
+    #             "10m_u_component_of_wind",
+    #             "mean_sea_level_pressure",
+    #             "u_component_of_wind",
+    #         ],
+    #         1999,
+    #     )
+
+    # Test the calculate_field function
+    # ds = dc.calculate_field(
+    #     function=mpcalc.potential_temperature,
+    #     argument_names={"temperature": "temperature", "pressure": "pressure"},
+    #     units={"temperature": "kelvin", "pressure": "millibar"},
+    #     data_loader_kwargs={"chunks": {"time": 7}},
+    #     # levels=950,
+    #     years=1999,
+    # )
 # %%

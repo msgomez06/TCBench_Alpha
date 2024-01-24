@@ -12,7 +12,7 @@ with multiple pressure levels.
 import cdsapi
 import numpy as np
 
-folder_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/Data/ERA5/"
+folder_path = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 
 # load client interface
 client = cdsapi.Client()
@@ -243,5 +243,5 @@ for var in datavars:
             "time": times,
         }
 
-        target_path = f"{folder_path}ERA5_{year}_{var}.nc"
+        target_path = f"{folder_path}/PL/ERA5_{year}_{var}.nc"
         client.retrieve(name=data_origin, request=data_params, target=target_path)

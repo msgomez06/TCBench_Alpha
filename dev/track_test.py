@@ -12,14 +12,13 @@ Script to test handling of a single track
 
 # OS and IO
 import os
-
 import sys
 import matplotlib.pyplot as plt
 
 # Backend Libraries
 import xarray as xr
 
-from utils import toolbox, constants
+from utils import toolbox, constants, data_lib as dlib
 
 full_data = toolbox.read_hist_track_file()
 # %%
@@ -35,38 +34,63 @@ track = toolbox.tc_track(
     ALT_ID=katrina[constants.ibtracs_cols._track_cols__metadata.get("ALT_ID")].iloc[0],
 )
 # %%
-data_path = (
-    "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/" + "gpot/gpot_2005.nc"
+data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+# data_path = data_dir + "legacy_files/gpot/gpot_2005.nc"
+
+dc = dlib.Data_Collection(data_dir)
+
+track.process_data_collection(
+    dc,
+    ignore_vars=[
+        "specific_humidity",
+        "land_sea_mask",
+    ],
 )
 
-meteo_data = xr.open_dataset(data_path)
 
-# %%
-track.add_var_from_dataset(
-    radius=500,
-    data=meteo_data,
-    resolution=0.25,
-    num_levels=1 if len(meteo_data.dims) == 3 else meteo_data.dims["plev"],
-)
+# meteo_data = xr.open_dataset(data_path).isel(plev=0)
+# # %%
+# # track.add_var_from_dataset(
+# #     radius=500,
+# #     data=meteo_data,
+# #     resolution=1,
+# #     num_levels=1 if len(meteo_data.dims) == 3 else meteo_data.dims["plev"],
+# # )
 
-# %%
-plot_test = track.rad_S_ds
+# # %%
+# track.add_var_from_dataset(
+#     circum_points=20,
+#     data=meteo_data,
+#     resolution=0.25,
+#     masktype="rect",
+#     num_levels=1 if len(meteo_data.dims) == 3 else meteo_data.dims["plev"],
+# )
 
-vmin = plot_test.var151.min()
-vmax = plot_test.var151.max()
+# # %%
+# plot_test = track.rect_S_ds
 
-for i in range(0, 61, 5):
-    plt.figure(dpi=150)
-    plot_test.isel(time=i).var151.plot.imshow(vmin=vmin, vmax=vmax)
-    plt.show()
-    plt.close()
-# %%
-vmin = plot_test.var34.min()
-vmax = plot_test.var34.max()
+# vmin = plot_test.var129.min()
+# vmax = plot_test.var129.max()
+# plot_test = plot_test.where(~plot_test.isnull(), drop=True)
+# for i in range(0, 61, 5):
+#     plt.figure(dpi=150)
+#     plt.imshow(
+#         plot_test.isel(time=i)
+#         .where(~plot_test.isel(time=i).isnull(), drop=True)
+#         .var129.values,
+#         vmin=vmin,
+#         vmax=vmax,
+#     )
+#     # plot_test.isel(time=i).var129.plot.imshow(vmin=vmin, vmax=vmax)
+#     plt.show()
+#     plt.close()
+# # %%
+# vmin = plot_test.var34.min()
+# vmax = plot_test.var34.max()
 
-for i in range(0, 61):
-    plt.figure(dpi=150)
-    plot_test.isel(time=i).var34.plot.imshow(vmin=vmin, vmax=vmax)
-    plt.show()
-    plt.close()
-# %%
+# for i in range(0, 61):
+#     plt.figure(dpi=150)
+#     plot_test.isel(time=i).var34.plot.imshow(vmin=vmin, vmax=vmax)
+#     plt.show()
+#     plt.close()
+# # %%

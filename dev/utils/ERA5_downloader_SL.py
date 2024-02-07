@@ -357,5 +357,5 @@ for var in datavars:
             "time": times,
         }
 
-        target_path = f"{folder_path}/SL/ERA5_{year}_{var}.nc"
+        target_path = f"{folder_path}/SL/{var}/ERA5_{year}_{var}.nc"
         client.retrieve(name=data_origin, request=data_params, target=target_path)

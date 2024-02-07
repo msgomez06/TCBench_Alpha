@@ -20,6 +20,8 @@ import xarray as xr
 import metpy.calc as mpcalc
 import metpy.units as mpunits
 import joblib as jl
+from memory_profiler import profile
+from pint import Quantity
 
 # TCBench Libraries
 try:
@@ -81,6 +83,12 @@ class Data_Collection:
         var_dictionary = {}
         global_year_list = []
         for var in var_list:
+            # Check if var is a directory. If not, pass and continue
+            # but print a warning
+            if not os.path.isdir(os.path.join(var_path, var)):
+                print(f"{var} is not a directory. Skipping.")
+                continue
+
             file_list = sorted(os.listdir(os.path.join(var_path, var)))
 
             avail_years = []
@@ -93,7 +101,6 @@ class Data_Collection:
             global_year_list += avail_years
             var_dictionary[var] = sorted(avail_years)
         global_year_list = sorted(list(set(global_year_list)))
-        print(global_year_list)
         if global_year_list == []:
             print("No files found in " + var_path)
         else:
@@ -101,7 +108,6 @@ class Data_Collection:
             global_year_list = np.arange(
                 min(global_year_list), max(global_year_list) + 1
             ).astype(str)
-        print(global_year_list)
 
         if hasattr(self, "meta_dfs"):
             self.meta_dfs[var_type] = self._check_availability(
@@ -270,11 +276,14 @@ class Data_Collection:
 
         # Load the dataset
         ds = kwargs.get("data_loader", xr.open_mfdataset)(
-            file_list, **kwargs.get("data_loader_kwargs", {})
+            file_list,
+            **kwargs.get("data_loader_kwargs", {"parallel": True}),
         )
 
         return ds, data_var_dict
 
+    # TODO: Figure out why this explodes memory usage and fix it
+    @profile
     def calculate_field(
         self,
         function: callable,
@@ -301,7 +310,6 @@ class Data_Collection:
         -------
         None or xarray.Dataset
         """
-        # TODO: Handle levels if present
         # Check if the function is a metpy callable
         if hasattr(mpcalc, function.__name__):
             # if it is, check that the required units are passed as kwargs
@@ -314,10 +322,12 @@ class Data_Collection:
             argument_names, dict
         ), "argument_names must be a dict mapping variable names to argument names"
 
-        # check that the years are an int or a list
+        # check that the years are an int or a list. Then, if it's an int, make it a list
         assert isinstance(years, int) or isinstance(
             years, list
         ), "years must be an int or a list"
+        if not isinstance(years, list):
+            years = [years]
 
         # get list of variables
         var_list = list(argument_names.keys())
@@ -333,14 +343,49 @@ class Data_Collection:
             )
             var_list.remove("pressure")
 
+        # Check if the save directory exists, if not create it
+        save_dir = os.path.join(
+            kwargs.get("save_path", self.data_path),
+            kwargs.get("save_folder", "CV"),
+            kwargs.get("save_var", function.__name__),
+        )
+        if not os.path.isdir(save_dir):
+            os.makedirs(save_dir)
+            avail_list = None
+        else:
+            # Check what years are already available
+            avail_list = os.listdir(save_dir)
+            avail_years = []
+            for file in avail_list:
+                avail_years.append(file.split(".")[0].split("_")[1])
+            avail_years = [int(yr) for yr in sorted(list(set(avail_years)))]
+            print(
+                f"Calculated files for {function.__name__} detected for years {avail_years}"
+            )
+            if len(avail_list) < 1:
+                avail_list = None
+
         # load the dataset
         ds, dv_dict = self.retrieve_ds(var_list, years, **kwargs)
 
         # check if specific levels have been requested
         if "levels" in kwargs.keys():
             print("Levels detected in the kwargs. " "Filtering to requested levels.")
-            ds = ds.sel(level=kwargs.get("levels"))
+            # print("Levels existing in any of the available files will be skipped!")
+            # if avail_list is not None:
+            #     # determine what levels are available
+            #     calculated_levels = xr.open_mfdataset(
+            #         [os.path.join(save_dir, file) for file in avail_list]
+            #     ).level.values
 
+            #     for level in kwargs.get("levels"):
+            #         if level in calculated_levels:
+            #             print(f"Level {level} already calculated. Skipping.")
+            #             kwargs.get("levels").remove(level)
+
+            ds = ds.sel(level=ds.level.isin(kwargs.get("levels"))).load()
+
+        print("Dataset loaded. Calculating field...")
         arg_dict = {}
         for var in argument_names.keys():
             arg_dict[argument_names[var]] = (
@@ -350,10 +395,45 @@ class Data_Collection:
                 * mpunits.units(kwargs.get("units", {}).get("pressure", None))
             )
 
-        # create a temporary dataset to store the calculated field
-        temp_ds = None
+        # Generate the function arguments for the offset and scale factor
+        offset_dict = {}
+        for var in argument_names.keys():
+            offset_dict[argument_names[var]] = (
+                ds[dv_dict[var]].encoding["add_offset"]
+                * mpunits.units(kwargs.get("units", {}).get(var, None))
+                if var != "pressure"
+                else ds[kwargs.get("pressure_name", "level")]
+                * mpunits.units(kwargs.get("units", {}).get("pressure", None))
+            )
 
-        def time_process(dataset, function, step, arg_dict):
+        scale_dict = {}
+        for var in argument_names.keys():
+            scale_dict[argument_names[var]] = (
+                ds[dv_dict[var]].encoding["scale_factor"]
+                * mpunits.units(kwargs.get("units", {}).get(var, None))
+                if var != "pressure"
+                else ds[kwargs.get("pressure_name", "level")]
+                * mpunits.units(kwargs.get("units", {}).get("pressure", None))
+            )
+
+        for key in scale_dict.keys():
+            if key != "pressure":
+                scale_dict[key] = scale_dict[key] + offset_dict[key]
+
+        # Calculate the value for the offset and scale factor from the input data
+        offset = function(**offset_dict)
+        if isinstance(offset, Quantity):
+            offset = offset.magnitude
+        print("Offset calculated: ", offset)
+
+        scale = function(**scale_dict)
+        if isinstance(scale, Quantity):
+            scale = scale.magnitude
+        scale -= offset
+        print("Scale factor calculated: ", scale)
+
+        # Set it up so that the function is applied to each time step using joblib
+        def time_process(function, step, arg_dict):
             # calculate the field
             temp_dict = {}
             for arg in arg_dict.keys():
@@ -361,44 +441,146 @@ class Data_Collection:
                     temp_dict[arg] = arg_dict[arg].sel(time=step)
                 else:
                     temp_dict[arg] = arg_dict[arg]
+                print(temp_dict[arg])
 
-            return function(**temp_dict)
+            # calculate the field
+            data = function(**temp_dict)
+            units = kwargs.get("out_units", str(data.metpy.units))
+            print("Fine till here")
+            # create a dataset from the dataarray
+            data = (
+                data.metpy.dequantify()
+                .to_dataset(
+                    name=function.__name__,
+                )
+                .compute()
+            )
+
+            # add the attributes
+            data.attrs = {
+                "units": units,
+                "long_name": kwargs.get("long_name", function.__name__),
+                "standard_name": kwargs.get("standard_name", function.__name__),
+                "Calculation Source": 'Calculated using the TCBench "calculate_field" function',
+            }
+            print("Fine till save")
+            if kwargs.get("save", False):
+                print("Saving temporary file...")
+                # compression code inspired by github.com/pydata/xarray/discussions/5709
+                # and https://stackoverflow.com/questions/70102997/scale-factor-and-add-offset-in-xarray-to-netcdf-lead-to-some-small-negative-valu
+                # if you run into issues, make sure netcdf4 is installed in conda env
+                # (netcdf4 solution from queez in https://stackoverflow.com/questions/40766037/)
+                encoding = {}
+                for data_var in data.data_vars:
+                    encoding[data_var] = {
+                        "original_shape": data[data_var].shape,
+                        "_FillValue": kwargs.get("fill_value", -32767),
+                        "dtype": kwargs.get("save_dtype", np.int16),
+                        "add_offset": offset,
+                        "scale_factor": scale,
+                    }
+
+                print(data.time.dt.year.values)
+
+                target_file = os.path.join(
+                    save_dir,
+                    kwargs.get(
+                        "save_name",
+                        f"temp_{step}_"
+                        f"{kwargs.get('prefix', 'ERA5')}_"
+                        f"{str(data['time.year'].values)[:4]}_{kwargs.get('save_var', function.__name__)}"
+                        f".{kwargs.get('file_type', 'nc')}",
+                    ),
+                )
+
+                data.to_netcdf(
+                    target_file,
+                    mode="w",
+                    encoding=encoding,
+                    engine=kwargs.get("engine", "netcdf4"),
+                    # compute=True,
+                )
+                data.close()
+            # else:
+            #     return data
 
         # use joblib to parallelize the calculation per time step
-        # with as many processes as there are cores
-        job_array = jl.Parallel(n_jobs=-1, verbose=10, backend="threading")(
-            jl.delayed(time_process)(temp_ds, function, i, arg_dict)
-            for i in ds.time.values
-        )
+        # with as many threads as there are cores
+        job_array = jl.Parallel(
+            n_jobs=-1,
+            verbose=2,
+        )(jl.delayed(time_process)(function, i, arg_dict) for i in ds.time.values)
 
-        temp_ds = xr.concat(job_array, dim="time")
+        if kwargs.get("save", False):
+            print("Merging temporary files...")
+            # make the list of temporary files
+            for year in years:
+                temp_files = os.listdir(save_dir)
+                # filter to make sure the files are from the year being processed
+                temp_files = [
+                    file
+                    for file in temp_files
+                    if file.split(".")[0].split("_")[1] == str(year)
+                ]
+                # check if a non temporary file is in the list
+                if len(temp_files) > 0:
+                    non_temp_files = [
+                        file
+                        for file in temp_files
+                        if file.split(".")[0].split("_")[0] != "temp"
+                    ]
+                    if len(non_temp_files) == 1:
+                        # TODO: handling the merging of an existing file
+                        pass
+                    elif len(non_temp_files) > 1:
+                        raise ValueError("Multiple base files found - aborting.")
 
-        # for dataset in job_array:
-        #     if temp_ds is None:
-        #         temp_ds = dataset.copy()
-        #     else:
-        #         temp_ds = xr.concat([temp_ds, dataset], dim="time")
-        #     del dataset
-        del job_array
+                # check to make sure the remaining files are temporary files
+                temp_files = [
+                    file
+                    for file in temp_files
+                    if file.split(".")[0].split("_")[0] == "temp"
+                ]
+                xr.open_mfdataset(
+                    [os.path.join(save_dir, file) for file in temp_files]
+                ).to_netcdf(
+                    os.path.join(
+                        save_dir,
+                        f"{kwargs.get('prefix', 'ERA5')}_{year}_{kwargs.get('save_var', function.__name__)}.nc",
+                    ),
+                    mode="w",
+                    encoding={
+                        "add_offset": offset,
+                        "scale_factor": scale,
+                        "_FillValue": kwargs.get("fill_value", -32767),
+                        "dtype": kwargs.get("save_dtype", np.int16),
+                    },
+                    engine=kwargs.get("engine", "netcdf4"),
+                )
 
-        return temp_ds
-        # return function(**arg_dict)
+                # remove the temporary files
+                for file in temp_files:
+                    os.remove(os.path.join(save_dir, file))
+
+        else:
+            return xr.concat(job_array)
 
 
 # %% Functions
 
 # %% Test running the data collection class
-
 if __name__ == "__main__":
     # Test running the data collection class
     dc = Data_Collection(default)
 
-    # Test the variable availability function
-    dc.variable_availability(
-        save_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
-    )
+    # # Test the variable availability function
+    # dc.variable_availability(
+    #     save_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+    # )
 
-    # Test the retrieve_ds function
+    print(dc.meta_dfs)
+
+    ## Test the retrieve_ds function
     # ds = dc.retrieve_ds(
     #         [
     #             "10m_u_component_of_wind",
@@ -408,13 +590,15 @@ if __name__ == "__main__":
     #         1999,
     #     )
 
-    # Test the calculate_field function
-    # ds = dc.calculate_field(
+    # # Test the calculate_field function
+    # dc.calculate_field(
     #     function=mpcalc.potential_temperature,
     #     argument_names={"temperature": "temperature", "pressure": "pressure"},
     #     units={"temperature": "kelvin", "pressure": "millibar"},
-    #     data_loader_kwargs={"chunks": {"time": 7}},
-    #     # levels=950,
-    #     years=1999,
-    # )
+    #     # chunking={"chunks": {"time": 200}},
+    #     levels=950,
+    #     years=2020,
+    #     save=True,
+    # ).chunk({"time": 200}).to_netcdf("/scratch/mgomezd1/test.nc")
+
 # %%

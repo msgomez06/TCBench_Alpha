@@ -204,6 +204,14 @@ data_store_names = {
     "CV": "Calculated Values",
 }
 
+# %% valid coordinate names
+valid_coords = {
+    "latitude": ["lat", "Lat"],
+    "longitude": ["lon", "Lon"],
+    "time": ["time", "Time", "t"],
+    "level": ["Lev", "lev", "pressure", "Pressure"],
+}
+
 
 # %% PRIMED Metadata
 # Questions for developers:

@@ -38,6 +38,7 @@ data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 # data_path = data_dir + "legacy_files/gpot/gpot_2005.nc"
 
 dc = dlib.Data_Collection(data_dir)
+# %%
 
 track.process_data_collection(
     dc,
@@ -45,6 +46,8 @@ track.process_data_collection(
         "specific_humidity",
         "land_sea_mask",
     ],
+    masktype="rect",
+    circum_points=20,
 )
 
 

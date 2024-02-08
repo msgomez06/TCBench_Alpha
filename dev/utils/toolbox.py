@@ -22,6 +22,7 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 import xesmf as xe
+import joblib as jl
 
 # TCBench Libraries
 try:
@@ -190,6 +191,68 @@ def haversine(latp, lonp, lat_list, lon_list, **kwargs):
     return 2 * 6371 * np.arcsin(np.sqrt(a))
 
 
+def get_coord_vars(dataset):
+    lon_coord = lat_coord = time_coord = level_coord = False
+    coord_array = np.array(dataset.coords)
+
+    for idx, coord in enumerate(coord_array):
+
+        # retrieve the longitude coordinate if available
+        if not lon_coord:
+            lon_coord = (
+                coord_array[idx]
+                if np.any(
+                    [
+                        valid_name in coord
+                        for valid_name in constants.valid_coords["longitude"]
+                    ]
+                )
+                else False
+            )
+
+        if not lat_coord:
+            lat_coord = (
+                coord_array[idx]
+                if np.any(
+                    [
+                        valid_name in coord
+                        for valid_name in constants.valid_coords["latitude"]
+                    ]
+                )
+                else False
+            )
+
+        if not time_coord:
+            time_coord = (
+                coord_array[idx]
+                if np.any(
+                    [
+                        valid_name == coord
+                        for valid_name in constants.valid_coords["time"]
+                    ]
+                )
+                else False
+            )
+
+        if not level_coord:
+            level_coord = (
+                coord_array[idx]
+                if np.any(
+                    [
+                        valid_name in coord
+                        for valid_name in constants.valid_coords["level"]
+                    ]
+                )
+                else False
+            )
+
+    assert np.all(
+        [bool(lon_coord), bool(lat_coord), bool(time_coord)]
+    ), "Missing lat, lon, or time coordinates in dataset"
+
+    return lat_coord, lon_coord, time_coord, level_coord
+
+
 # %% Data Processing / Preprocessing Library
 """
 This cell contains the following classes and functions:
@@ -335,8 +398,41 @@ def sanitize_timestamps(timestamps, data):
     # 2005-08-29 11:10:00, 2005-08-29 14:45:00
     valid_steps = timestamps[np.isin(timestamps, data.time.values)]
 
-    data_steps = data.sel(time=valid_steps)
-    return data_steps
+    return valid_steps
+
+
+def get_regrider(dataset: xr.Dataset, lat_coord: str, lon_coord: str, **kwargs):
+    # Generate lat and lot vectors
+    lat_vector, lon_vector = axis_generator(**kwargs)
+
+    assert (
+        lon_vector.shape <= dataset[lon_coord].shape
+    ), f"Longitude vector is too long. Expected <={dataset[lon_coord].shape} but got {lon_vector.shape}. Downscaling not yet supported."
+    assert (
+        lat_vector.shape <= dataset[lat_coord].shape
+    ), f"Latitude vector is too long. Expected <={dataset[lat_coord].shape} but got {lat_vector.shape}. Downscaling not yet supported."
+
+    # If either the lat or lon vectors are smaller than the dataset, regrid
+    if (
+        lon_vector.shape != dataset[lon_coord].shape
+        or lat_vector.shape != dataset[lat_coord].shape
+    ):
+        print("Making a regridder...")
+        # Generate empty array to cast data with
+        casting_array = xr.DataArray(
+            np.NaN,
+            dims=[lat_coord, lon_coord],
+            coords={lat_coord: lat_vector, lon_coord: lon_vector},
+        )
+        regridder = xe.Regridder(
+            dataset,
+            casting_array,
+            "bilinear",
+        )
+
+        return regridder(dataset)
+    else:
+        return None
 
 
 # %%
@@ -461,6 +557,41 @@ class tc_track:
 
         return output
 
+    def get_mask(self, timestamp, **kwargs):
+        # read in parameters if submitted, otherwise use defaults
+        masktype = kwargs.get("masktype", "rad")
+
+        if masktype == "rad":
+            mask_getter = self.get_radmask
+        elif masktype == "rect":
+            mask_getter = self.get_rectmask
+        else:
+            raise ValueError(f"Unsupported mask type {masktype}")
+
+        # Generate grid
+        ll_gridder(**kwargs)
+
+        mask = None
+
+        point = self.track[0][self.timestamps == timestamp][0]
+
+        temp_mask = mask_getter(point, **kwargs)
+
+        # Tile the mask if the number of levels is greater than 1
+        num_levels = kwargs.get("num_levels", 1)
+        if num_levels > 1:
+            temp_mask = np.tile(temp_mask, (num_levels, 1, 1))[np.newaxis, :, :, :]
+
+        if mask is None:
+            mask = temp_mask
+        else:
+            mask = np.vstack([mask, temp_mask])
+
+        # Squeeze the mask to remove unnecessary dimensions
+        mask = mask.squeeze()
+
+        return mask
+
     def get_mask_series(self, timesteps, **kwargs):
         # read in parameters if submitted, otherwise use defaults
         masktype = kwargs.get("masktype", "rad")
@@ -482,6 +613,8 @@ class tc_track:
             point = self.track[0][self.timestamps == stamp][0]
 
             temp_mask = get_mask(point, **kwargs)
+            print(num_levels)
+
             if num_levels > 1:
                 temp_mask = np.tile(temp_mask, (num_levels, 1, 1))[np.newaxis, :, :, :]
 
@@ -489,6 +622,7 @@ class tc_track:
                 mask = temp_mask
             else:
                 mask = np.vstack([mask, temp_mask])
+
         return mask
 
     def process_data_collection(self, data_collection, **kwargs):
@@ -528,40 +662,140 @@ class tc_track:
                 ), f"Missing variable data for {year}"
 
             for var in var_list:
+
+                ##TODO: check if file exsits and if it does, check if the variable is already in the file
+                # if it is, skip it
+
                 print("Years", years, "Variable", var)
                 # Load the data for each variable
-                var_data, dv_dict = data_collection.retrieve_ds(
+                var_data, _ = data_collection.retrieve_ds(
                     vars=var, years=years, **kwargs
                 )
+
+                # get coordinate names
+                lat_coord, lon_coord, time_coord, level_coord = get_coord_vars(var_data)
+
                 print(f"Adding {var} to {self.uid}...")
 
-                # # If the variable includes a level dimension, add the variable
-                # # one level at a time. This is a workaround for memory issues
-                # coord_array = np.array(var_data.coords)
-                # for idx, coord in enumerate(coord_array):
-                #     level_coord = (
-                #         coord_array[idx]
-                #         if np.any(
-                #             [
-                #                 valid_name in coord
-                #                 for valid_name in constants.valid_coords["level"]
-                #             ]
-                #         )
-                #         else False
-                #     )
+                # Sanitize timestamps because ibtracs includes unsual time steps
+                valid_steps = sanitize_timestamps(self.timestamps, var_data)
 
-                # if level_coord:
-                #     # Add the variable by level if they're in the coordinates
-                #     for level in var_data[level_coord].values:
-                #         var_data_level = var_data.sel({level_coord: level}).copy()
-                #         self.add_ds_var(var_data_level)
-                #         del var_data_level
-                #         gc.collect()
-                # else:
-                # Add the variable to the track object
-                self.add_ds_var(var_data)
+                print(f"Processing time steps in parallel...")
+                # Loop through each time step in parallel
+                jl.Parallel(n_jobs=-1, verbose=2)(
+                    jl.delayed(self.process_timestep)(
+                        var_data.sel(time=t).copy(),
+                        **{
+                            "lat_coord": lat_coord,
+                            "lon_coord": lon_coord,
+                            "time_coord": time_coord,
+                            "level_coord": level_coord,
+                        },
+                        timestamp=t,
+                        **kwargs,
+                    )
+                    for t in valid_steps
+                )
 
-    def add_ds_var(self, data, **kwargs):
+                # Garbage collect to free up memory
+                gc.collect()
+
+                # Read in the temporary files and merge them into the final file
+                file_list = os.listdir(self.filepath)
+
+                datavar = list(var_data.data_vars)[0]
+
+                print(datavar)
+                # Filter out files that do not include the temp preix, variable name, and UID
+                for file in file_list.copy():
+                    if datavar not in file:
+                        file_list.remove(file)
+                        print(
+                            f"Removing {file} from file list because it doesn't include {var}"
+                        )
+                    elif "temp" not in file:
+                        file_list.remove(file)
+                        print(
+                            f"Removing {file} from file list because it doesn't include temp"
+                        )
+                    elif self.uid not in file:
+                        file_list.remove(file)
+                        print(
+                            f"Removing {file} from file list because it doesn't include {self.uid}"
+                        )
+
+                print("after removal: ", file_list)
+                # Load the temporary files into an xarray dataset
+                temp_ds = xr.open_mfdataset(
+                    [self.filepath + file for file in file_list],
+                    concat_dim=time_coord,
+                    combine="nested",
+                    parallel=True,
+                )
+                print(temp_ds)
+
+                # calculate the encoding for the final dataset
+                encoding = {}
+                for data_var in temp_ds.data_vars:
+                    encoding[data_var] = {
+                        "original_shape": temp_ds[data_var].shape,
+                        "_FillValue": temp_ds[data_var].encoding.get(
+                            "_FillValue", -32767
+                        ),
+                        "dtype": kwargs.get("dtype", np.int16),
+                        "add_offset": temp_ds[data_var].mean().compute().values,
+                        "scale_factor": temp_ds[data_var].std().compute().values
+                        / kwargs.get("scale_divisor", 2000),
+                    }
+
+                # if the UID dataset exists, merge the new data into it
+                if os.path.exists(self.filepath + f"{self.uid}.nc"):
+                    print(f"Merging {var} into {self.uid}...")
+                    # Load the UID dataset
+                    final_ds = xr.open_dataset(self.filepath + f"{self.uid}.nc")
+
+                    # Merge the new data into the final dataset
+                    final_ds = xr.merge([final_ds, temp_ds])
+
+                    # Save the final dataset to disk
+                    final_ds.to_netcdf(
+                        self.filepath + f"{self.uid}_appended.nc",
+                        mode="w",
+                        compute=True,
+                        encoding=encoding,
+                    )
+
+                    # Workaround to rewrite file with appended file
+                    # Overwrite the original file with the appended file
+                    subprocess.run(
+                        [
+                            "mv",
+                            "-f",
+                            f"{self.filepath}{self.uid}.{ds_type}.appended.nc",
+                            f"{self.filepath}{self.uid}.{ds_type}.nc",
+                        ]
+                    )
+                else:
+                    # Save the final dataset to disk
+                    temp_ds.to_netcdf(
+                        self.filepath + f"{self.uid}.nc",
+                        mode="w",
+                        compute=True,
+                        encoding=encoding,
+                    )
+
+                # Close the temporary dataset
+                temp_ds.close()
+                del temp_ds
+
+                # delete the temporary files
+                for file in file_list:
+                    os.remove(self.filepath + file)
+
+                # Garbage collect to free up memory
+                gc.collect()
+
+    def process_timestep(self, data, **kwargs):
         """
         Function to add a dataset to the track object. It expects
         a dataset served by the data collection object.
@@ -589,7 +823,7 @@ class tc_track:
         data : xr.Dataset, required
             Dataset containing the data to add to the track object
             Coords:
-                'lat' must be in the latitude dimension
+                'lat' or 'Lat' must be in the latitude dimension name
                 'lon' must be in the longitude dimension
                 'time' must be in the time dimension
                 'level' must be in the level dimension if the dataset is multilevel
@@ -599,78 +833,25 @@ class tc_track:
         None
 
         """
-        coord_array = np.array(data.coords)
 
-        # # retrieve the longitude coordinate if available
-        # lon_coord = coord_array[np.logical_or(["lon" in coord for coord in coord_array], [
-        #     "Lon" in coord for coord in coord_array])]
+        # Determine if the data will be rectanglular or radial, default rad
+        ds_type = kwargs.get("masktype", "rad")
 
-        # # retrieve the latitude coordinate if available
-        # lat_coord = coord_array[np.logical_or(["lat" in coord for coord in coord_array], [
-        #     "Lat" in coord for coord in coord_array])]
+        # Get the coordinate names
+        lon_coord = kwargs.get("lon_coord", None)
+        lat_coord = kwargs.get("lat_coord", None)
+        time_coord = kwargs.get("time_coord", None)
+        level_coord = kwargs.get("level_coord", None)
 
-        # # retrieve the time coordinate if available.
-        # time_coord = coord_array[np.logical_or(np.logical_or(["time" == coord for coord in coord_array], [
-        #     "Time" == coord for coord in coord_array]), ["t" == coord for coord in coord_array])]
+        # Determine the number of levels
+        if level_coord:
+            num_levels = data[level_coord].shape[0]
+        else:
+            num_levels = 1
 
-        lon_coord = lat_coord = time_coord = level_coord = False
-
-        for idx, coord in enumerate(coord_array):
-            # retrieve the longitude coordinate if available
-            if not lon_coord:
-                lon_coord = (
-                    coord_array[idx]
-                    if np.any(
-                        [
-                            valid_name in coord
-                            for valid_name in constants.valid_coords["longitude"]
-                        ]
-                    )
-                    else False
-                )
-
-            if not lat_coord:
-                lat_coord = (
-                    coord_array[idx]
-                    if np.any(
-                        [
-                            valid_name in coord
-                            for valid_name in constants.valid_coords["latitude"]
-                        ]
-                    )
-                    else False
-                )
-
-            if not time_coord:
-                time_coord = (
-                    coord_array[idx]
-                    if np.any(
-                        [
-                            valid_name == coord
-                            for valid_name in constants.valid_coords["time"]
-                        ]
-                    )
-                    else False
-                )
-
-            if not level_coord:
-                level_coord = (
-                    coord_array[idx]
-                    if np.any(
-                        [
-                            valid_name in coord
-                            for valid_name in constants.valid_coords["level"]
-                        ]
-                    )
-                    else False
-                )
-
-        assert np.all(
-            [bool(lon_coord), bool(lat_coord), bool(time_coord)]
-        ), "Missing lat, lon, or time coordinates in dataset"
-
-        # Determine if the data will be rectanglular or radial, default rect
-        ds_type = kwargs.get("masktype", "rect")
+        # Get the timestamp from the kwargs
+        timestamp = kwargs.get("timestamp", None)
+        assert timestamp is not None, "Fatal error: timestamp not found in kwargs"
 
         # Check if the dataset doesn't exist in the object
         if not hasattr(self, f"{ds_type}_ds"):
@@ -698,81 +879,52 @@ class tc_track:
                         self.var_list.append(var)
         else:
             # If the dataset doesn't exist in the object, add all variables
-            print("Creating dataset...")
+            # print("Creating dataset...")
 
-            print(data[time_coord])
+            attrs = data.attrs
 
-            # Sanitize timestamps because ibtracs includes unsual time steps,
-            # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
-            # 2005-08-29 11:10:00, 2005-08-29 14:45:00
-            valid_steps = self.timestamps[
-                np.isin(self.timestamps, data[time_coord].values)
-            ]
-            data_steps = data.sel({time_coord: valid_steps}).chunk(
-                kwargs.get(
-                    "chunking",
-                    {
-                        time_coord: 2,
-                        # lon_coord: 200,
-                        # lat_coord: 200,
-                        level_coord: 1 if level_coord else None,
-                    },
-                )
-            )
-            attrs = data_steps.attrs
+            # Retrieve regridder if necessary
+            regridder = get_regrider(dataset=data, **kwargs)
 
-            # Generate lat and lot vectors
-            lat_vector, lon_vector = axis_generator(**kwargs)
-            assert (
-                lon_vector.shape <= data_steps[lon_coord].shape
-            ), f"Longitude vector is too long. Expected <={data_steps[lon_coord].shape} but got {lon_vector.shape}. Downscaling not yet supported."
-            assert (
-                lat_vector.shape <= data_steps[lat_coord].shape
-            ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
+            if regridder is not None:
+                data = regridder(data)
 
-            # Generate empty array to cast data with
-            casting_array = xr.DataArray(
-                np.NaN,
-                dims=[lat_coord, lon_coord],
-                coords={lat_coord: lat_vector, lon_coord: lon_vector},
-            )
-            regridder = xe.Regridder(
-                data_steps,
-                casting_array,
-                "bilinear",
-                # parallel=True,
-            )
-            data_steps = regridder(data_steps)
-            mask = self.get_mask_series(valid_steps, **kwargs)
+            level_coord = kwargs.get("level_coord", None)
+            if level_coord:
+                num_levels = data[level_coord].shape[0]
 
-            data_steps = data_steps.where(mask)
-            data_steps.attrs = attrs
+            mask = self.get_mask(num_levels=num_levels, **kwargs)
+            # mask = self.get_mask_series(valid_steps, **kwargs)
 
-            setattr(self, f"{ds_type}_ds", data_steps)
+            data = data.where(mask)
+            data.attrs = attrs
+
+            setattr(self, f"{ds_type}_ds", data)
 
             encoding = {}
-            for data_var in data_steps.data_vars:
+            for data_var in data.data_vars:
                 encoding[data_var] = {
-                    "original_shape": data_steps[data_var].shape,
-                    "_FillValue": data_steps[data_var].encoding.get(
-                        "_FillValue", -32767
-                    ),
+                    "original_shape": data[data_var].shape,
+                    "_FillValue": data[data_var].encoding.get("_FillValue", -32767),
                     "dtype": kwargs.get("dtype", np.int16),
-                    "add_offset": data_steps[data_var].mean().compute().values,
-                    "scale_factor": data_steps[data_var].std().compute().values
+                    "add_offset": data[data_var].mean().compute().values,
+                    "scale_factor": data[data_var].std().compute().values
                     / kwargs.get("scale_divisor", 2000),
                 }
 
-            data_steps.to_netcdf(
-                self.filepath + f"{self.uid}.{ds_type}.nc",
+            data.to_netcdf(
+                self.filepath
+                + f"temp_{np.where(self.timestamps == timestamp)[0][0]}.{data_var}.{self.uid}.{ds_type}.nc",
                 mode="w",
                 compute=True,
                 encoding=encoding,
             )
 
-            data_steps.close()
-            del data_steps
+            data.close()
+            del data
+            delattr(self, f"{ds_type}_ds")
 
+        ## TODO: update to work like part above
         # If the list of variables to process is not empty, process them
         if hasattr(self, "var_list"):
             # Sanitize timestamps because ibtracs includes unsual time steps,
@@ -788,7 +940,7 @@ class tc_track:
                         time_coord: 2,
                         # lon_coord: 50,
                         # lat_coord: 50,
-                        level_coord: 1 if level_coord else None,
+                        # level_coord: 1 if level_coord else None,
                     },
                 )
             )
@@ -806,33 +958,52 @@ class tc_track:
                 lat_vector.shape <= data_steps[lat_coord].shape
             ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
 
+            # Initiate the encoding dictionary so that it can be updated in the loop
             encoding = {}
+            for var in self.__getattribute__(f"{ds_type}_ds").data_vars:
+                print(var, self.__getattribute__(f"{ds_type}_ds")[var].encoding)
+                encoding[var] = {
+                    "dtype": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
+                        "dtype"
+                    ],
+                    "_FillValue": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
+                        "_FillValue"
+                    ],
+                    "add_offset": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
+                        "add_offset"
+                    ],
+                    "scale_factor": self.__getattribute__(f"{ds_type}_ds")[
+                        var
+                    ].encoding["scale_factor"],
+                }
+
             for var in self.var_list:
                 print(f"Adding {var} to dataset...")
                 var_steps = data_steps[var]
-                # Generate empty array to cast data with
-                casting_array = xr.DataArray(
-                    np.NaN,
-                    dims=[lat_coord, lon_coord],
-                    coords={lat_coord: lat_vector, lon_coord: lon_vector},
-                )
-                regridder = xe.Regridder(
-                    var_steps,
-                    casting_array,
-                    "bilinear",
-                    # parallel=True,
-                )
-                var_steps = regridder(var_steps)
+                # Check if regrid is required
+                if (
+                    lon_vector.shape != data_steps[lon_coord].shape
+                    or lat_vector.shape != data_steps[lat_coord].shape
+                ):
+                    data_steps = self.regrid(
+                        self,
+                        dataset=data_steps,
+                        lat_coord=lat_coord,
+                        lon_coord=lon_coord,
+                        lat_vector=lat_vector,
+                        lon_vector=lon_vector,
+                        **kwargs,
+                    )
                 mask = self.get_mask_series(valid_steps, **kwargs)
 
                 if level_coord:
                     mask = np.tile(mask, (len(var_steps[level_coord]), 1, 1, 1))
                     mask = np.moveaxis(mask, 0, 1)
 
-                print(f"Mask shape: {mask.shape}")
-                assert np.all(
-                    ~np.logical_xor(mask[:, 0, :, :], mask[:, 1, :, :])
-                ), "Mask is not consistent across levels"
+                    print(f"Mask shape: {mask.shape}")
+                    assert np.all(
+                        ~np.logical_xor(mask[:, 0, :, :], mask[:, 1, :, :])
+                    ), "Mask is not consistent across levels"
                 # if level_coord:
                 #     temp_step = None
                 #     for level in var_steps[level_coord].values:
@@ -852,7 +1023,6 @@ class tc_track:
 
                 # Add the variable to the dataset
                 self.__getattribute__(f"{ds_type}_ds")[var] = var_steps
-                encoding = {}
 
                 encoding[var] = {
                     "original_shape": data_steps[var].shape,

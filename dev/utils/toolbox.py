@@ -759,7 +759,7 @@ class tc_track:
 
                     # Save the final dataset to disk
                     final_ds.to_netcdf(
-                        self.filepath + f"{self.uid}_appended.nc",
+                        self.filepath + f"{self.uid}.appended.nc",
                         mode="w",
                         compute=True,
                         encoding=encoding,
@@ -771,8 +771,8 @@ class tc_track:
                         [
                             "mv",
                             "-f",
-                            f"{self.filepath}{self.uid}.{ds_type}.appended.nc",
-                            f"{self.filepath}{self.uid}.{ds_type}.nc",
+                            f"{self.filepath}{self.uid}.appended.nc",
+                            f"{self.filepath}{self.uid}.nc",
                         ]
                     )
                 else:
@@ -824,9 +824,9 @@ class tc_track:
             Dataset containing the data to add to the track object
             Coords:
                 'lat' or 'Lat' must be in the latitude dimension name
-                'lon' must be in the longitude dimension
-                'time' must be in the time dimension
-                'level' must be in the level dimension if the dataset is multilevel
+                'lon' or 'Lon' must be in the longitude dimension
+                'time', 'Time', or 't' must be found as the time dimension
+                'lev', 'Lev', 'pressure', or 'Pressure' must be in the level dimension if the dataset is multilevel
 
         Returns
         -------
@@ -927,36 +927,12 @@ class tc_track:
         ## TODO: update to work like part above
         # If the list of variables to process is not empty, process them
         if hasattr(self, "var_list"):
-            # Sanitize timestamps because ibtracs includes unsual time steps,
-            # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
-            # 2005-08-29 11:10:00, 2005-08-29 14:45:00
-            valid_steps = self.timestamps[
-                np.isin(self.timestamps, data[time_coord].values)
-            ]
-            data_steps = data.sel({time_coord: valid_steps}).chunk(
-                kwargs.get(
-                    "chunking",
-                    {
-                        time_coord: 2,
-                        # lon_coord: 50,
-                        # lat_coord: 50,
-                        # level_coord: 1 if level_coord else None,
-                    },
-                )
-            )
-            attrs = data_steps.attrs
 
-            # Generate lat and lot vectors
-            lat_vector, lon_vector = axis_generator(**kwargs)
+            # Retrieve regridder if necessary
+            regridder = get_regrider(dataset=data, **kwargs)
 
-            # Generate lat and lot vectors
-            lat_vector, lon_vector = axis_generator(**kwargs)
-            assert (
-                lon_vector.shape <= data_steps[lon_coord].shape
-            ), f"Longitude vector is too long. Expected <={data_steps[lon_coord].shape} but got {lon_vector.shape}. Downscaling not yet supported."
-            assert (
-                lat_vector.shape <= data_steps[lat_coord].shape
-            ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
+            if regridder is not None:
+                data = regridder(data)
 
             # Initiate the encoding dictionary so that it can be updated in the loop
             encoding = {}
@@ -979,47 +955,38 @@ class tc_track:
 
             for var in self.var_list:
                 print(f"Adding {var} to dataset...")
-                var_steps = data_steps[var]
-                # Check if regrid is required
-                if (
-                    lon_vector.shape != data_steps[lon_coord].shape
-                    or lat_vector.shape != data_steps[lat_coord].shape
-                ):
-                    data_steps = self.regrid(
-                        self,
-                        dataset=data_steps,
-                        lat_coord=lat_coord,
-                        lon_coord=lon_coord,
-                        lat_vector=lat_vector,
-                        lon_vector=lon_vector,
-                        **kwargs,
-                    )
-                mask = self.get_mask_series(valid_steps, **kwargs)
+                var_steps = data[var]
+                attrs = var_steps.attrs
 
-                if level_coord:
-                    mask = np.tile(mask, (len(var_steps[level_coord]), 1, 1, 1))
-                    mask = np.moveaxis(mask, 0, 1)
+                mask = self.get_mask(num_levels=num_levels, **kwargs)
 
-                    print(f"Mask shape: {mask.shape}")
-                    assert np.all(
-                        ~np.logical_xor(mask[:, 0, :, :], mask[:, 1, :, :])
-                    ), "Mask is not consistent across levels"
                 # if level_coord:
-                #     temp_step = None
-                #     for level in var_steps[level_coord].values:
-                #         if temp_step is None:
-                #             temp_step = var_steps.sel({level_coord: level}).where(mask)
-                #         else:
-                #             temp_step = xr.concat(
-                #                 [
-                #                     temp_step,
-                #                     var_steps.sel({level_coord: level}).where(mask),
-                #                 ],
-                #                 dim=level_coord,
-                #             )
-                #     var_steps = temp_step
-                # else:
+                #     mask = np.tile(mask, (len(var_steps[level_coord]), 1, 1, 1))
+                #     mask = np.moveaxis(mask, 0, 1)
+
+                #     print(f"Mask shape: {mask.shape}")
+                #     assert np.all(
+                #         ~np.logical_xor(mask[:, 0, :, :], mask[:, 1, :, :])
+                #     ), "Mask is not consistent across levels"
+                # # if level_coord:
+                # #     temp_step = None
+                # #     for level in var_steps[level_coord].values:
+                # #         if temp_step is None:
+                # #             temp_step = var_steps.sel({level_coord: level}).where(mask)
+                # #         else:
+                # #             temp_step = xr.concat(
+                # #                 [
+                # #                     temp_step,
+                # #                     var_steps.sel({level_coord: level}).where(mask),
+                # #                 ],
+                # #                 dim=level_coord,
+                # #             )
+                # #     var_steps = temp_step
+                # # else:
                 var_steps = var_steps.where(mask)
+
+                # Ensure that the attributes didn't get stripped through processing
+                var_steps.attrs = attrs
 
                 # Add the variable to the dataset
                 self.__getattribute__(f"{ds_type}_ds")[var] = var_steps

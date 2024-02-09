@@ -43,7 +43,10 @@ dc = dlib.Data_Collection(data_dir)
 track.process_data_collection(
     dc,
     ignore_vars=[
-        "specific_humidity",
+        "specific_cloud_ice_water_content",
+        "specific_cloud_liquid_water_content",
+        "specific_rain_water_content",
+        "specific_snow_water_content",
         "land_sea_mask",
     ],
     masktype="rect",

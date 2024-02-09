@@ -705,13 +705,12 @@ class tc_track:
 
                 datavar = list(var_data.data_vars)[0]
 
-                print(datavar)
                 # Filter out files that do not include the temp preix, variable name, and UID
                 for file in file_list.copy():
-                    if datavar not in file:
+                    if "." + datavar + "." not in file:
                         file_list.remove(file)
                         print(
-                            f"Removing {file} from file list because it doesn't include {var}"
+                            f"Removing {file} from file list because it doesn't include {datavar}"
                         )
                     elif "temp" not in file:
                         file_list.remove(file)

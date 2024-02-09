@@ -40,18 +40,20 @@ data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 dc = dlib.Data_Collection(data_dir)
 # %%
 
-track.process_data_collection(
-    dc,
-    ignore_vars=[
-        "specific_cloud_ice_water_content",
-        "specific_cloud_liquid_water_content",
-        "specific_rain_water_content",
-        "specific_snow_water_content",
-        "land_sea_mask",
-    ],
-    masktype="rect",
-    circum_points=20,
-)
+# track.process_data_collection(
+#     dc,
+#     ignore_vars=[
+#         "specific_cloud_ice_water_content",
+#         "specific_cloud_liquid_water_content",
+#         "specific_rain_water_content",
+#         "specific_snow_water_content",
+#         "land_sea_mask",
+#     ],
+#     masktype="rect",
+#     circum_points=20,
+# )
+
+track.load_data(ds_type="rect")
 
 
 # meteo_data = xr.open_dataset(data_path).isel(plev=0)
@@ -100,3 +102,5 @@ track.process_data_collection(
 #     plt.show()
 #     plt.close()
 # # %%
+
+# %%

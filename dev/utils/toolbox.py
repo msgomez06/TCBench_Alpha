@@ -23,6 +23,14 @@ import numpy as np
 import xarray as xr
 import xesmf as xe
 import joblib as jl
+import cartopy.crs as ccrs
+import cartopy.feature
+from cartopy.mpl.patch import geos_to_path
+import itertools
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from matplotlib.collections import PolyCollection
+
 
 # TCBench Libraries
 try:
@@ -748,17 +756,22 @@ class tc_track:
                     }
 
                 # if the UID dataset exists, merge the new data into it
-                if os.path.exists(self.filepath + f"{self.uid}.nc"):
+                if os.path.exists(
+                    self.filepath + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
+                ):
                     print(f"Merging {var} into {self.uid}...")
                     # Load the UID dataset
-                    final_ds = xr.open_dataset(self.filepath + f"{self.uid}.nc")
+                    final_ds = xr.open_dataset(
+                        self.filepath + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
+                    )
 
                     # Merge the new data into the final dataset
                     final_ds = xr.merge([final_ds, temp_ds])
 
                     # Save the final dataset to disk
                     final_ds.to_netcdf(
-                        self.filepath + f"{self.uid}.appended.nc",
+                        self.filepath
+                        + f"{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
                         mode="w",
                         compute=True,
                         encoding=encoding,
@@ -770,14 +783,15 @@ class tc_track:
                         [
                             "mv",
                             "-f",
-                            f"{self.filepath}{self.uid}.appended.nc",
-                            f"{self.filepath}{self.uid}.nc",
+                            f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
+                            f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
                         ]
                     )
                 else:
                     # Save the final dataset to disk
                     temp_ds.to_netcdf(
-                        self.filepath + f"{self.uid}.nc",
+                        self.filepath
+                        + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
                         mode="w",
                         compute=True,
                         encoding=encoding,
@@ -1025,32 +1039,51 @@ class tc_track:
 
         gc.collect()
 
-    # This will be eliminated later
-    def add_var_from_dataset(self, data, **kwargs):
+    # Function to load the data from storage
+    def load_data(self, **kwargs):
         """
-        Function to add data from a dataset to the track object.
-
-        The function first checks if a dataset does not exist in the
-        object, and if it does not, the function checks if a dataset
-        exists on disk. If it does, the function loads the dataset and
-        then checks to see if the input data variables are already present
-        in the dataset. If they are, the function skips the variable.
-        If they are not, the variable is added to a list of variables to
-        process.
-
-        If the dataset exists in the object, the function checks to see
-        whether the input data variables are already present in the
-        dataset. If they are, the function skips the variable. If they
-        are not, the variable is added to a list of variables to process.
-
-        If the list of variables to process is not empty, the function
-        loops through the list and adds the variables to the dataset.
-        The dataset is then stored in the object and saved to disk.
+        Function to load the data from storage
 
         Parameters
         ----------
-        data : xr.Dataset, required
-            Dataset containing the data to add to the track object
+        None
+
+        Returns
+        -------
+        None
+
+        """
+        ds_type = kwargs.get("ds_type", "rad")
+
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, f"{ds_type}_ds"):
+            # Check if the dataset exists on disk
+            if os.path.exists(self.filepath + f"{self.uid}.{ds_type}.nc"):
+                # If it does, load the dataset
+                print("Loading dataset...")
+                setattr(
+                    self,
+                    f"{ds_type}_ds",
+                    xr.open_dataset(self.filepath + f"{self.uid}.{ds_type}.nc"),
+                )
+            else:
+                print(f"Dataset {self.uid}.{ds_type}.nc not found on disk")
+                print(
+                    'You can create the dataset by running the "process_data_collection" method'
+                    " with a data collection object as an argument."
+                )
+
+    def plot3D(self, var, timestamps, **kwargs):
+        """
+        Function to plot 3D data on a map, showing the variable in 3D for the given timestamps
+
+        Parameters
+        ----------
+        var : STR, required
+            Variable to plot
+
+        timestamp : STR, required
+            Timestamp to plot
 
         Returns
         -------
@@ -1058,147 +1091,257 @@ class tc_track:
 
         """
 
-        assert (
-            type(data) == xr.Dataset
-        ), f"Invalid data type {type(data)}. Expected xarray Dataset"
+        def f(x, y):
+            x, y = np.meshgrid(x, y)
+            return (1 - x / 2 + x**5 + y**3 + x * y**2) * np.exp(-(x**2) - y**2)
 
-        # Determine if the data to be added is single or multilevel
-        level_type = "S" if len(data.dims) == 3 else "M"
-        ds_type = kwargs.get("masktype", "rad")
+        nx, ny = 256, 512
+        X = np.linspace(-180, 10, nx)
+        Y = np.linspace(-90, 90, ny)
+        Z = f(np.linspace(-3, 3, nx), np.linspace(-3, 3, ny))
 
-        # Check if the dataset doesn't exist in the object
-        if not hasattr(self, f"{ds_type}_{level_type}_ds"):
-            # Check if the dataset exists on disk
-            if os.path.exists(self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc"):
-                # If it does, load the dataset
-                print("Loading dataset...")
-                setattr(
-                    self,
-                    f"{ds_type}_{level_type}_ds",
-                    xr.open_dataset(
-                        self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc"
-                    ),
+        fig = plt.figure()
+        ax3d = fig.add_axes([0, 0, 1, 1], projection="3d")
+
+        # Make an axes that we can use for mapping the data in 2d.
+        proj_ax = plt.figure().add_axes([0, 0, 1, 1], projection=ccrs.Mercator())
+        cs = proj_ax.contourf(X, Y, Z, transform=ccrs.PlateCarree(), alpha=0.4)
+
+        for zlev, collection in zip(cs.levels, cs.collections):
+            paths = collection.get_paths()
+            # Figure out the matplotlib transform to take us from the X, Y coordinates
+            # to the projection coordinates.
+            trans_to_proj = collection.get_transform() - proj_ax.transData
+
+            paths = [trans_to_proj.transform_path(path) for path in paths]
+            verts3d = [
+                np.concatenate(
+                    [path.vertices, np.tile(zlev, [path.vertices.shape[0], 1])], axis=1
                 )
+                for path in paths
+            ]
+            codes = [path.codes for path in paths]
+            pc = Poly3DCollection([])
+            pc.set_verts_and_codes(verts3d, codes)
 
-        # Check if the dataset exists in the object after checking disk
-        if hasattr(self, f"{ds_type}_{level_type}_ds"):
-            # Check if the data variables are already in the dataset
-            for var in data.data_vars:
-                if var in self.__getattribute__(f"{ds_type}_{level_type}_ds").data_vars:
-                    print(f"Variable {var} already in dataset. Skipping...")
-                else:
-                    print(f"Adding variable {var} to processing list...")
-                    if not hasattr(self, "var_list"):
-                        self.var_list = [var]
-                    else:
-                        self.var_list.append(var)
-        else:
-            # If the dataset doesn't exist in the object, add all variables
-            print("Creating dataset...")
+            # Copy all of the parameters from the contour (like colors) manually.
+            # Ideally we would use update_from, but that also copies things like
+            # the transform, and messes up the 3d plot.
+            pc.set_facecolor(collection.get_facecolor())
+            pc.set_edgecolor(collection.get_edgecolor())
+            pc.set_alpha(collection.get_alpha())
 
-            # Sanitize timestamps because ibtracs includes unsual time steps,
-            # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
-            # 2005-08-29 11:10:00, 2005-08-29 14:45:00
-            valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
-            data_steps = data.sel(time=valid_steps)
-            attrs = data_steps.attrs
+            ax3d.add_collection3d(pc)
 
-            # Generate lat and lot vectors
-            lat_vector, lon_vector = axis_generator(**kwargs)
-            assert (
-                lon_vector.shape <= data_steps.lon.shape
-            ), f"Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported."
-            assert (
-                lat_vector.shape <= data_steps.lat.shape
-            ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
+        proj_ax.autoscale_view()
 
-            # Generate empty array to cast data with
-            casting_array = xr.DataArray(
-                np.NaN,
-                dims=["lat", "lon"],
-                coords={"lat": lat_vector, "lon": lon_vector},
-            )
-            regridder = xe.Regridder(
-                data_steps,
-                casting_array,
-                "bilinear",
-                # parallel=True,
-            )
-            data_steps = regridder(data_steps)
-            mask = self.get_mask_series(valid_steps, **kwargs)
+        ax3d.set_xlim(*proj_ax.get_xlim())
+        ax3d.set_ylim(*proj_ax.get_ylim())
+        ax3d.set_zlim(Z.min(), Z.max())
 
-            data_steps = data_steps.where(mask)
-            data_steps.attrs = attrs
+        # Now add coastlines.
+        concat = lambda iterable: list(itertools.chain.from_iterable(iterable))
 
-            setattr(self, f"{ds_type}_{level_type}_ds", data_steps)
+        target_projection = proj_ax.projection
 
-            data_steps.to_netcdf(
-                self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc",
-                mode="w",
-                compute=True,
-            )
+        feature = cartopy.feature.NaturalEarthFeature("physical", "land", "110m")
+        geoms = feature.geometries()
 
-        # If the list of variables to process is not empty, process them
-        if hasattr(self, "var_list"):
-            # Sanitize timestamps because ibtracs includes unsual time steps,
-            # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
-            # 2005-08-29 11:10:00, 2005-08-29 14:45:00
-            valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
-            data_steps = data.sel(time=valid_steps)
+        # Use the convenience (private) method to get the extent as a shapely geometry.
+        boundary = proj_ax._get_extent_geom()
 
-            # Generate lat and lot vectors
-            lat_vector, lon_vector = axis_generator(**kwargs)
+        # Transform the geometries from PlateCarree into the desired projection.
+        geoms = [
+            target_projection.project_geometry(geom, feature.crs) for geom in geoms
+        ]
+        # Clip the geometries based on the extent of the map (because mpl3d can't do it for us)
+        geoms = [boundary.intersection(geom) for geom in geoms]
 
-            # Generate mask
-            mask = self.get_mask_series(valid_steps, **kwargs)
-            assert (
-                lon_vector.shape <= data_steps.lon.shape
-            ), f"Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported."
-            assert (
-                lat_vector.shape <= data_steps.lat.shape
-            ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
+        # Convert the geometries to paths so we can use them in matplotlib.
+        paths = concat(geos_to_path(geom) for geom in geoms)
+        polys = concat(path.to_polygons() for path in paths)
+        lc = PolyCollection(polys, edgecolor="black", facecolor="green", closed=True)
+        ax3d.add_collection3d(lc, zs=ax3d.get_zlim()[0])
 
-            for var in self.var_list:
-                print(f"Adding {var} to dataset...")
-                var_steps = data_steps[var]
-                # Generate empty array to cast data with
-                casting_array = xr.DataArray(
-                    np.NaN,
-                    dims=["lat", "lon"],
-                    coords={"lat": lat_vector, "lon": lon_vector},
-                )
-                regridder = xe.Regridder(
-                    var_steps,
-                    casting_array,
-                    "bilinear",
-                    parallel=True,
-                )
-                var_steps = regridder(var_steps)
-                var_steps = var_steps.where(mask)
+        plt.close(proj_ax.figure)
+        plt.show()
 
-                # Add the variable to the dataset
-                self.__getattribute__(f"{ds_type}_{level_type}_ds")[var] = var_steps
+        pass
 
-            self.__getattribute__(f"{ds_type}_{level_type}_ds").to_netcdf(
-                self.filepath + f"{self.uid}.{ds_type}.{level_type}.appended.nc",
-                mode="w",
-                compute=True,
-            )
+    # # This will be eliminated later
+    # def add_var_from_dataset(self, data, **kwargs):
+    #     """
+    #     Function to add data from a dataset to the track object.
 
-            # Workaround to rewrite file with appended file
-            self.__getattribute__(f"{ds_type}_{level_type}_ds").close()
-            # Overwrite the original file with the appended file
-            subprocess.run(
-                [
-                    "mv",
-                    "-f",
-                    f"{self.filepath}{self.uid}.{ds_type}.{level_type}.appended.nc",
-                    f"{self.filepath}{self.uid}.{ds_type}.{level_type}.nc",
-                ]
-            )
+    #     The function first checks if a dataset does not exist in the
+    #     object, and if it does not, the function checks if a dataset
+    #     exists on disk. If it does, the function loads the dataset and
+    #     then checks to see if the input data variables are already present
+    #     in the dataset. If they are, the function skips the variable.
+    #     If they are not, the variable is added to a list of variables to
+    #     process.
 
-            # remove the var_list attribute
-            delattr(self, "var_list")
+    #     If the dataset exists in the object, the function checks to see
+    #     whether the input data variables are already present in the
+    #     dataset. If they are, the function skips the variable. If they
+    #     are not, the variable is added to a list of variables to process.
+
+    #     If the list of variables to process is not empty, the function
+    #     loops through the list and adds the variables to the dataset.
+    #     The dataset is then stored in the object and saved to disk.
+
+    #     Parameters
+    #     ----------
+    #     data : xr.Dataset, required
+    #         Dataset containing the data to add to the track object
+
+    #     Returns
+    #     -------
+    #     None
+
+    #     """
+
+    #     assert (
+    #         type(data) == xr.Dataset
+    #     ), f"Invalid data type {type(data)}. Expected xarray Dataset"
+
+    #     # Determine if the data to be added is single or multilevel
+    #     level_type = "S" if len(data.dims) == 3 else "M"
+    #     ds_type = kwargs.get("masktype", "rad")
+
+    #     # Check if the dataset doesn't exist in the object
+    #     if not hasattr(self, f"{ds_type}_{level_type}_ds"):
+    #         # Check if the dataset exists on disk
+    #         if os.path.exists(self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc"):
+    #             # If it does, load the dataset
+    #             print("Loading dataset...")
+    #             setattr(
+    #                 self,
+    #                 f"{ds_type}_{level_type}_ds",
+    #                 xr.open_dataset(
+    #                     self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc"
+    #                 ),
+    #             )
+
+    #     # Check if the dataset exists in the object after checking disk
+    #     if hasattr(self, f"{ds_type}_{level_type}_ds"):
+    #         # Check if the data variables are already in the dataset
+    #         for var in data.data_vars:
+    #             if var in self.__getattribute__(f"{ds_type}_{level_type}_ds").data_vars:
+    #                 print(f"Variable {var} already in dataset. Skipping...")
+    #             else:
+    #                 print(f"Adding variable {var} to processing list...")
+    #                 if not hasattr(self, "var_list"):
+    #                     self.var_list = [var]
+    #                 else:
+    #                     self.var_list.append(var)
+    #     else:
+    #         # If the dataset doesn't exist in the object, add all variables
+    #         print("Creating dataset...")
+
+    #         # Sanitize timestamps because ibtracs includes unsual time steps,
+    #         # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
+    #         # 2005-08-29 11:10:00, 2005-08-29 14:45:00
+    #         valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
+    #         data_steps = data.sel(time=valid_steps)
+    #         attrs = data_steps.attrs
+
+    #         # Generate lat and lot vectors
+    #         lat_vector, lon_vector = axis_generator(**kwargs)
+    #         assert (
+    #             lon_vector.shape <= data_steps.lon.shape
+    #         ), f"Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported."
+    #         assert (
+    #             lat_vector.shape <= data_steps.lat.shape
+    #         ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
+
+    #         # Generate empty array to cast data with
+    #         casting_array = xr.DataArray(
+    #             np.NaN,
+    #             dims=["lat", "lon"],
+    #             coords={"lat": lat_vector, "lon": lon_vector},
+    #         )
+    #         regridder = xe.Regridder(
+    #             data_steps,
+    #             casting_array,
+    #             "bilinear",
+    #             # parallel=True,
+    #         )
+    #         data_steps = regridder(data_steps)
+    #         mask = self.get_mask_series(valid_steps, **kwargs)
+
+    #         data_steps = data_steps.where(mask)
+    #         data_steps.attrs = attrs
+
+    #         setattr(self, f"{ds_type}_{level_type}_ds", data_steps)
+
+    #         data_steps.to_netcdf(
+    #             self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc",
+    #             mode="w",
+    #             compute=True,
+    #         )
+
+    #     # If the list of variables to process is not empty, process them
+    #     if hasattr(self, "var_list"):
+    #         # Sanitize timestamps because ibtracs includes unsual time steps,
+    #         # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
+    #         # 2005-08-29 11:10:00, 2005-08-29 14:45:00
+    #         valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
+    #         data_steps = data.sel(time=valid_steps)
+
+    #         # Generate lat and lot vectors
+    #         lat_vector, lon_vector = axis_generator(**kwargs)
+
+    #         # Generate mask
+    #         mask = self.get_mask_series(valid_steps, **kwargs)
+    #         assert (
+    #             lon_vector.shape <= data_steps.lon.shape
+    #         ), f"Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported."
+    #         assert (
+    #             lat_vector.shape <= data_steps.lat.shape
+    #         ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
+
+    #         for var in self.var_list:
+    #             print(f"Adding {var} to dataset...")
+    #             var_steps = data_steps[var]
+    #             # Generate empty array to cast data with
+    #             casting_array = xr.DataArray(
+    #                 np.NaN,
+    #                 dims=["lat", "lon"],
+    #                 coords={"lat": lat_vector, "lon": lon_vector},
+    #             )
+    #             regridder = xe.Regridder(
+    #                 var_steps,
+    #                 casting_array,
+    #                 "bilinear",
+    #                 parallel=True,
+    #             )
+    #             var_steps = regridder(var_steps)
+    #             var_steps = var_steps.where(mask)
+
+    #             # Add the variable to the dataset
+    #             self.__getattribute__(f"{ds_type}_{level_type}_ds")[var] = var_steps
+
+    #         self.__getattribute__(f"{ds_type}_{level_type}_ds").to_netcdf(
+    #             self.filepath + f"{self.uid}.{ds_type}.{level_type}.appended.nc",
+    #             mode="w",
+    #             compute=True,
+    #         )
+
+    #         # Workaround to rewrite file with appended file
+    #         self.__getattribute__(f"{ds_type}_{level_type}_ds").close()
+    #         # Overwrite the original file with the appended file
+    #         subprocess.run(
+    #             [
+    #                 "mv",
+    #                 "-f",
+    #                 f"{self.filepath}{self.uid}.{ds_type}.{level_type}.appended.nc",
+    #                 f"{self.filepath}{self.uid}.{ds_type}.{level_type}.nc",
+    #             ]
+    #         )
+
+    #         # remove the var_list attribute
+    #         delattr(self, "var_list")
 
 
 # %%

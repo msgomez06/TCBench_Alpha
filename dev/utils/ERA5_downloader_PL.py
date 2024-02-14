@@ -10,19 +10,20 @@ with multiple pressure levels.
 """
 
 import cdsapi
+import os
 import numpy as np
 
 folder_path = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 
 # load client interface
-client = cdsapi.Client()
+client = cdsapi.Client(timeout=600, quiet=False, debug=True)
 
 
 # Single Pressure
 data_origin = "reanalysis-era5-pressure-levels"
 
 datavars = [
-    "divergence",
+    # "divergence",
     # "fraction_of_cloud_cover",
     # "geopotential",
     # "ozone_mass_mixing_ratio",
@@ -37,23 +38,16 @@ datavars = [
     # "u_component_of_wind",
     # "v_component_of_wind",
     # "vertical_velocity",
+    "vorticity",
 ]
 
 # Specify the pressure levels to download for each variable. Else, download all
 plevels = {
-    "geopotential": [
-        "200",
-        "250",
-        "300",
-        "400",
-        "500",
-        "600",
-        "700",
-        "850",
-        "925",
-        "1000",
-    ],
-    "relative_humidity": [
+    "vorticity": [
+        "10",
+        "20",
+        "30",
+        "50",
         "70",
         "100",
         "150",
@@ -64,67 +58,14 @@ plevels = {
         "500",
         "600",
         "700",
+        "800",
         "850",
+        "900",
         "925",
+        "950",
+        "975",
         "1000",
     ],
-    "temperature": [
-        "70",
-        "100",
-        "150",
-        "200",
-        "250",
-        "300",
-        "400",
-        "500",
-        "600",
-        "700",
-        "850",
-        "925",
-        "1000",
-    ],
-    "u_component_of_wind": [
-        "250",
-        "200",
-        "300",
-        "400",
-        "500",
-        "600",
-        "700",
-        "850",
-        "925",
-        "1000",
-    ],
-    "v_component_of_wind": [
-        "250",
-        "200",
-        "300",
-        "400",
-        "500",
-        "600",
-        "700",
-        "850",
-        "925",
-        "1000",
-    ],
-    "vertical_velocity": [
-        "200",
-        "250",
-        "300",
-        "400",
-        "500",
-        "600",
-        "700",
-        "850",
-        "925",
-        "1000",
-    ],
-    "divergence": [
-        "200",
-        "600",
-        "850",
-    ],
-    "specific_humidity": ["600"],
 }
 
 full_pressure = [
@@ -179,10 +120,9 @@ times = [
 ]
 
 years = {
-    "v_component_of_wind": [
-        2000,
+    "vorticity": [
+        2005,
     ],
-    "divergence": np.arange(2007, 2021, 1),
 }
 
 for var in datavars:
@@ -243,5 +183,11 @@ for var in datavars:
             "time": times,
         }
 
-        target_path = f"{folder_path}/PL/{var}/ERA5_{year}_{var}.nc"
+        # Make sure the target folder exists
+        directory_path = os.path.join(folder_path, "PL", var)
+        if not os.path.exists(directory_path):
+            os.makedirs(directory_path)
+        # filename
+        filename = f"ERA5_{year}_{var}.nc"
+        target_path = os.path.join(directory_path, filename)
         client.retrieve(name=data_origin, request=data_params, target=target_path)

@@ -28,8 +28,9 @@ import cartopy.feature
 from cartopy.mpl.patch import geos_to_path
 import itertools
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.collections import PolyCollection
+from mpl_toolkits.mplot3d.axes3d import Axes3D
+import matplotlib as mpl
 
 
 # TCBench Libraries
@@ -268,12 +269,7 @@ This cell contains the following classes and functions:
 """
 
 
-def read_hist_track_file(
-    tracks_path=f"{repo_path}/tracks/ibtracs/",
-    backend=pd.read_csv,
-    track_cols=constants.ibtracs_cols,
-    skip_rows=[1],
-):
+def read_hist_track_file(**kwargs):
     """
     Function to read storm track files that include all the historical data
     in a single file
@@ -306,6 +302,14 @@ def read_hist_track_file(
     track_object : type defined by backend. Default is pandas dataframe
 
     """
+    tracks_path = kwargs.get(
+        "tracks_path",
+        f"/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/",
+    )
+    backend = kwargs.get("backend", pd.read_csv)
+    track_cols = kwargs.get("track_cols", constants.ibtracs_cols)
+    skip_rows = kwargs.get("skip_rows", [1])
+    lon_mode = kwargs.get("lon_mode", 360)
     file_list = os.listdir(tracks_path)
 
     assert len(file_list) == 1, f"{tracks_path} has more than one file. Aborting."
@@ -317,9 +321,13 @@ def read_hist_track_file(
                 usecols=track_cols.get_colnames(),
                 dtype=track_cols.get_dtypes(),
                 skiprows=skip_rows,
-                parse_dates=track_cols.get_datetime_cols(),
+                # parse_dates=track_cols.get_datetime_cols(),
                 na_filter=False,  # Otherwise pandas interprets 'NA' as NaN
             )
+            data["ISO_TIME"] = pd.to_datetime(data["ISO_TIME"])
+
+
+
         elif backend == "meteo_france":
             data = pd.read_csv(
                 handle,
@@ -343,6 +351,14 @@ def read_hist_track_file(
             )
         else:
             data = backend(handle)
+
+    
+    if lon_mode == 360:
+        data["LON"] = data["LON"].apply(lambda x: x + 360 if x < 0 else x)
+    elif lon_mode == 180:
+        data["LON"] = data["LON"].apply(lambda x: x - 180 if x > 180 else x)
+    else:
+        raise ValueError(f"Unsupported lon_mode {lon_mode}")
 
     return data
 
@@ -469,7 +485,7 @@ class tc_track:
 
             self.uid = UID
             self.name = NAME
-            self.track = (track,)
+            self.track = (track,)[0]  # Weird workaround - look into fixing
             self.timestamps = timestamps
 
             # Add alternate ID if available
@@ -576,12 +592,9 @@ class tc_track:
         else:
             raise ValueError(f"Unsupported mask type {masktype}")
 
-        # Generate grid
-        ll_gridder(**kwargs)
-
         mask = None
 
-        point = self.track[0][self.timestamps == timestamp][0]
+        point = self.track[self.timestamps == timestamp][0]
 
         temp_mask = mask_getter(point, **kwargs)
 
@@ -595,8 +608,11 @@ class tc_track:
         else:
             mask = np.vstack([mask, temp_mask])
 
-        # Squeeze the mask to remove unnecessary dimensions
-        mask = mask.squeeze()
+        # flip lat because reasons
+        if num_levels > 1:
+            mask = mask[:,:,::-1,:]
+        # Squeeze the mask to remove unnecessary dimensions. Flip y because reasons?
+        mask = mask.squeeze()[::-1, :]
 
         return mask
 
@@ -611,8 +627,6 @@ class tc_track:
         else:
             raise ValueError(f"Unsupported mask type {masktype}")
 
-        # Generate grid
-        ll_gridder(**kwargs)
         num_levels = kwargs.get("num_levels", 1)
 
         mask = None
@@ -680,6 +694,8 @@ class tc_track:
                     vars=var, years=years, **kwargs
                 )
 
+                print(var_data)
+
                 # get coordinate names
                 lat_coord, lon_coord, time_coord, level_coord = get_coord_vars(var_data)
 
@@ -732,81 +748,85 @@ class tc_track:
                         )
 
                 print("after removal: ", file_list)
-                # Load the temporary files into an xarray dataset
-                temp_ds = xr.open_mfdataset(
-                    [self.filepath + file for file in file_list],
-                    concat_dim=time_coord,
-                    combine="nested",
-                    parallel=True,
-                )
-                print(temp_ds)
 
-                # calculate the encoding for the final dataset
-                encoding = {}
-                for data_var in temp_ds.data_vars:
-                    encoding[data_var] = {
-                        "original_shape": temp_ds[data_var].shape,
-                        "_FillValue": temp_ds[data_var].encoding.get(
-                            "_FillValue", -32767
-                        ),
-                        "dtype": kwargs.get("dtype", np.int16),
-                        "add_offset": temp_ds[data_var].mean().compute().values,
-                        "scale_factor": temp_ds[data_var].std().compute().values
-                        / kwargs.get("scale_divisor", 2000),
-                    }
+                # If temporary files are present, merge them into the final file
+                if len(file_list) > 0:
+                    # Load the temporary files into an xarray dataset
+                    temp_ds = xr.open_mfdataset(
+                        [self.filepath + file for file in file_list],
+                        concat_dim=time_coord,
+                        combine="nested",
+                        parallel=True,
+                    )
+                    print(temp_ds)
 
-                # if the UID dataset exists, merge the new data into it
-                if os.path.exists(
-                    self.filepath + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
-                ):
-                    print(f"Merging {var} into {self.uid}...")
-                    # Load the UID dataset
-                    final_ds = xr.open_dataset(
+                    # calculate the encoding for the final dataset
+                    encoding = {}
+                    for data_var in temp_ds.data_vars:
+                        encoding[data_var] = {
+                            "original_shape": temp_ds[data_var].shape,
+                            "_FillValue": temp_ds[data_var].encoding.get(
+                                "_FillValue", -32767
+                            ),
+                            "dtype": kwargs.get("dtype", np.int16),
+                            "add_offset": temp_ds[data_var].mean().compute().values,
+                            "scale_factor": temp_ds[data_var].std().compute().values
+                            / kwargs.get("scale_divisor", 2000),
+                        }
+
+                    # if the UID dataset exists, merge the new data into it
+                    if os.path.exists(
                         self.filepath + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
-                    )
+                    ):
+                        print(f"Merging {var} into {self.uid}...")
+                        # Load the UID dataset
+                        final_ds = xr.open_dataset(
+                            self.filepath
+                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
+                        )
 
-                    # Merge the new data into the final dataset
-                    final_ds = xr.merge([final_ds, temp_ds])
+                        # Merge the new data into the final dataset
+                        final_ds = xr.merge([final_ds, temp_ds])
 
-                    # Save the final dataset to disk
-                    final_ds.to_netcdf(
-                        self.filepath
-                        + f"{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
-                        mode="w",
-                        compute=True,
-                        encoding=encoding,
-                    )
+                        # Save the final dataset to disk
+                        final_ds.to_netcdf(
+                            self.filepath
+                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
+                            mode="w",
+                            compute=True,
+                            encoding=encoding,
+                        )
 
-                    # Workaround to rewrite file with appended file
-                    # Overwrite the original file with the appended file
-                    subprocess.run(
-                        [
-                            "mv",
-                            "-f",
-                            f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
-                            f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
-                        ]
-                    )
-                else:
-                    # Save the final dataset to disk
-                    temp_ds.to_netcdf(
-                        self.filepath
-                        + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
-                        mode="w",
-                        compute=True,
-                        encoding=encoding,
-                    )
+                        # Workaround to rewrite file with appended file
+                        # Overwrite the original file with the appended file
+                        subprocess.run(
+                            [
+                                "mv",
+                                "-f",
+                                f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
+                                f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
+                            ]
+                        )
+                    else:
+                        # Save the final dataset to disk
+                        temp_ds.to_netcdf(
+                            self.filepath
+                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
+                            mode="w",
+                            compute=True,
+                            encoding=encoding,
+                        )
 
-                # Close the temporary dataset
-                temp_ds.close()
-                del temp_ds
+                    # Close the temporary dataset
+                    temp_ds.close()
+                    del temp_ds
 
-                # delete the temporary files
-                for file in file_list:
-                    os.remove(self.filepath + file)
+                    # delete the temporary files
+                    for file in file_list:
+                        os.remove(self.filepath + file)
 
-                # Garbage collect to free up memory
-                gc.collect()
+                    # Garbage collect to free up memory
+                    gc.collect()
 
     def process_timestep(self, data, **kwargs):
         """
@@ -866,6 +886,8 @@ class tc_track:
         timestamp = kwargs.get("timestamp", None)
         assert timestamp is not None, "Fatal error: timestamp not found in kwargs"
 
+        var_list = None
+
         # Check if the dataset doesn't exist in the object
         if not hasattr(self, f"{ds_type}_ds"):
             # Check if the dataset exists on disk
@@ -886,13 +908,15 @@ class tc_track:
                     print(f"Variable {var} already in dataset. Skipping...")
                 else:
                     print(f"Adding variable {var} to processing list...")
-                    if not hasattr(self, "var_list"):
-                        self.var_list = [var]
+                    if not var_list:
+                        var_list = [var]
                     else:
-                        self.var_list.append(var)
-        else:
-            # If the dataset doesn't exist in the object, add all variables
-            # print("Creating dataset...")
+                        var_list.append(var)
+        elif var_list is None: # add all the datavars to the list
+           var_list = list(data.data_vars)
+
+        if var_list is not None:
+            data = data[var_list]
 
             attrs = data.attrs
 
@@ -936,108 +960,134 @@ class tc_track:
             data.close()
             del data
             delattr(self, f"{ds_type}_ds")
-
-        ## TODO: update to work like part above
-        # If the list of variables to process is not empty, process them
-        if hasattr(self, "var_list"):
-
-            # Retrieve regridder if necessary
-            regridder = get_regrider(dataset=data, **kwargs)
-
-            if regridder is not None:
-                data = regridder(data)
-
-            # Initiate the encoding dictionary so that it can be updated in the loop
-            encoding = {}
-            for var in self.__getattribute__(f"{ds_type}_ds").data_vars:
-                print(var, self.__getattribute__(f"{ds_type}_ds")[var].encoding)
-                encoding[var] = {
-                    "dtype": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
-                        "dtype"
-                    ],
-                    "_FillValue": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
-                        "_FillValue"
-                    ],
-                    "add_offset": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
-                        "add_offset"
-                    ],
-                    "scale_factor": self.__getattribute__(f"{ds_type}_ds")[
-                        var
-                    ].encoding["scale_factor"],
-                }
-
-            for var in self.var_list:
-                print(f"Adding {var} to dataset...")
-                var_steps = data[var]
-                attrs = var_steps.attrs
-
-                mask = self.get_mask(num_levels=num_levels, **kwargs)
-
-                # if level_coord:
-                #     mask = np.tile(mask, (len(var_steps[level_coord]), 1, 1, 1))
-                #     mask = np.moveaxis(mask, 0, 1)
-
-                #     print(f"Mask shape: {mask.shape}")
-                #     assert np.all(
-                #         ~np.logical_xor(mask[:, 0, :, :], mask[:, 1, :, :])
-                #     ), "Mask is not consistent across levels"
-                # # if level_coord:
-                # #     temp_step = None
-                # #     for level in var_steps[level_coord].values:
-                # #         if temp_step is None:
-                # #             temp_step = var_steps.sel({level_coord: level}).where(mask)
-                # #         else:
-                # #             temp_step = xr.concat(
-                # #                 [
-                # #                     temp_step,
-                # #                     var_steps.sel({level_coord: level}).where(mask),
-                # #                 ],
-                # #                 dim=level_coord,
-                # #             )
-                # #     var_steps = temp_step
-                # # else:
-                var_steps = var_steps.where(mask)
-
-                # Ensure that the attributes didn't get stripped through processing
-                var_steps.attrs = attrs
-
-                # Add the variable to the dataset
-                self.__getattribute__(f"{ds_type}_ds")[var] = var_steps
-
-                encoding[var] = {
-                    "original_shape": data_steps[var].shape,
-                    "_FillValue": data_steps[var].encoding.get("_FillValue", -32767),
-                    "dtype": kwargs.get("dtype", np.int16),
-                    "add_offset": data_steps[var].mean().compute().values,
-                    "scale_factor": data_steps[var].std().compute().values
-                    / kwargs.get("scale_divisor", 2000),
-                }
-
-            self.__getattribute__(f"{ds_type}_ds").to_netcdf(
-                self.filepath + f"{self.uid}.{ds_type}.appended.nc",
-                mode="w",
-                compute=True,
-                encoding=encoding,
-            )
-
-            # Workaround to rewrite file with appended file
-            self.__getattribute__(f"{ds_type}_ds").close()
-            # Overwrite the original file with the appended file
-            subprocess.run(
-                [
-                    "mv",
-                    "-f",
-                    f"{self.filepath}{self.uid}.{ds_type}.appended.nc",
-                    f"{self.filepath}{self.uid}.{ds_type}.nc",
-                ]
-            )
-
-            # remove the var_list attribute
-            delattr(self, "var_list")
-            delattr(self, f"{ds_type}_ds")
             gc.collect()
 
-        gc.collect()
+
+
+        # else:
+        #     # If the dataset doesn't exist in the object, add all variables
+        #     # print("Creating dataset...")
+
+        #     attrs = data.attrs
+
+        #     # Retrieve regridder if necessary
+        #     regridder = get_regrider(dataset=data, **kwargs)
+
+        #     if regridder is not None:
+        #         data = regridder(data)
+
+        #     level_coord = kwargs.get("level_coord", None)
+        #     if level_coord:
+        #         num_levels = data[level_coord].shape[0]
+
+        #     mask = self.get_mask(num_levels=num_levels, **kwargs)
+        #     # mask = self.get_mask_series(valid_steps, **kwargs)
+
+        #     data = data.where(mask)
+        #     data.attrs = attrs
+
+        #     setattr(self, f"{ds_type}_ds", data)
+
+        #     encoding = {}
+        #     for data_var in data.data_vars:
+        #         encoding[data_var] = {
+        #             "original_shape": data[data_var].shape,
+        #             "_FillValue": data[data_var].encoding.get("_FillValue", -32767),
+        #             "dtype": kwargs.get("dtype", np.int16),
+        #             "add_offset": data[data_var].mean().compute().values,
+        #             "scale_factor": data[data_var].std().compute().values
+        #             / kwargs.get("scale_divisor", 2000),
+        #         }
+
+        #     data.to_netcdf(
+        #         self.filepath
+        #         + f"temp_{np.where(self.timestamps == timestamp)[0][0]}.{data_var}.{self.uid}.{ds_type}.nc",
+        #         mode="w",
+        #         compute=True,
+        #         encoding=encoding,
+        #     )
+
+        #     data.close()
+        #     del data
+        #     delattr(self, f"{ds_type}_ds")
+
+        # ## TODO: update to work like part above
+        # # If the list of variables to process is not empty, process them
+        # if var_list:
+        #     # Retrieve regridder if necessary
+        #     regridder = get_regrider(dataset=data, **kwargs)
+
+        #     if regridder is not None:
+        #         data = regridder(data)
+
+        #     # # Initiate the encoding dictionary so that it can be updated in the loop
+        #     # encoding = {}
+        #     # for var in self.__getattribute__(f"{ds_type}_ds").data_vars:
+        #     #     print(var, self.__getattribute__(f"{ds_type}_ds")[var].encoding)
+        #     #     encoding[var] = {
+        #     #         "dtype": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
+        #     #             "dtype"
+        #     #         ],
+        #     #         "_FillValue": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
+        #     #             "_FillValue"
+        #     #         ],
+        #     #         "add_offset": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
+        #     #             "add_offset"
+        #     #         ],
+        #     #         "scale_factor": self.__getattribute__(f"{ds_type}_ds")[
+        #     #             var
+        #     #         ].encoding["scale_factor"],
+        #     #     }
+
+        #     for var in var_list:
+        #         # print(f"Adding {var} to dataset...")
+        #         var_steps = data[var]
+        #         attrs = var_steps.attrs
+
+        #         mask = self.get_mask(num_levels=num_levels, **kwargs)
+
+        #         var_steps = var_steps.where(mask)
+
+        #         # Ensure that the attributes didn't get stripped through processing
+        #         var_steps.attrs = attrs
+
+        #         # Add the variable to the dataset
+        #         self.__getattribute__(f"{ds_type}_ds")[var] = var_steps
+
+        #         encoding[var] = {
+        #             "original_shape": var_steps.shape,
+        #             "_FillValue": var_steps.encoding.get("_FillValue", -32767),
+        #             "dtype": kwargs.get("dtype", np.int16),
+        #             "add_offset": var_steps.mean().compute().values,
+        #             "scale_factor": var_steps.std().compute().values
+        #             / kwargs.get("scale_divisor", 2000),
+        #         }
+
+        #     # self.__getattribute__(f"{ds_type}_ds").to_netcdf(
+        #     #     self.filepath + f"{self.uid}.{ds_type}.appended.nc",
+        #     #     mode="w",
+        #     #     compute=True,
+        #     #     encoding=encoding,
+        #     # )
+
+        #     # # Workaround to rewrite file with appended file
+        #     # self.__getattribute__(f"{ds_type}_ds").close()
+        #     # # Overwrite the original file with the appended file
+        #     # subprocess.run(
+        #     #     [
+        #     #         "mv",
+        #     #         "-f",
+        #     #         f"{self.filepath}{self.uid}.{ds_type}.appended.nc",
+        #     #         f"{self.filepath}{self.uid}.{ds_type}.nc",
+        #     #     ]
+        #     # )
+
+        #     # remove the var_list attribute
+        #     del var_list
+        #     delattr(self, f"{ds_type}_ds")
+        #     gc.collect()
+
+        # gc.collect()
 
     # Function to load the data from storage
     def load_data(self, **kwargs):
@@ -1073,72 +1123,119 @@ class tc_track:
                     " with a data collection object as an argument."
                 )
 
-    def plot3D(self, var, timestamps, **kwargs):
+    def plotTrack(self, **kwargs):
         """
-        Function to plot 3D data on a map, showing the variable in 3D for the given timestamps
 
         Parameters
         ----------
-        var : STR, required
-            Variable to plot
+        figsize : tuple, optional
+            Figure size.
+            The default is (6, 2). Note that the tuple is fed inverted to the
+            matplotlib figure function, i.e., default is fed as (2,6)
 
-        timestamp : STR, required
-            Timestamp to plot
+        height : float, optional
+            Height at which to plot the track and points.
+            The default is 0.0.
 
-        Returns
-        -------
-        None
+        point_size : int, optional
+            Size of the points. The default is 150.
 
+        step : int, optional
+            Timesteps to skip when plotting points. The default is 6.
+
+        radius : int, optional
+            The number of degrees east/west/north/south of the track minima/maxima
+            to plot. The default is 20.
+
+        background_color : tuple, optional
+            Background color. The default is matplotlibs tab:cyan with 0.25 alpha.
+
+        land_color : tuple, optional
+            Land color. The default is matplotlibs tab:green with 0.05 alpha.
+
+        coastline_color: str, optional
+            Coastline color. The default is "grey".
+
+        view_angles : tuple, optional
+            View angles. The default is (25, -90).
+
+        track_color : str, optional
+            Track color. The default is "black".
+
+        point_color : tuple, optional
+            Point color. The default is matplotlibs tab:orange.
+
+
+
+        Sources:
+        https://stackoverflow.com/questions/30223161/how-to-increase-the-size-of-an-axis-stretch-in-a-3d-plot
         """
 
-        def f(x, y):
-            x, y = np.meshgrid(x, y)
-            return (1 - x / 2 + x**5 + y**3 + x * y**2) * np.exp(-(x**2) - y**2)
+        width, height = kwargs.get("figsize", (6, 2))
+        point_height = kwargs.get("height", 0.0)
+        point_size = kwargs.get("point_size", 150)
+        step = kwargs.get("step", 6)
+        radius = kwargs.get("radius", 20)
+        background_color = kwargs.get(
+            "background_color",
+            (*mpl.colors.to_rgb(mpl.colors.TABLEAU_COLORS["tab:cyan"]), 0.25),
+        )
+        land_color = kwargs.get(
+            "land_color",
+            (*mpl.colors.to_rgb(mpl.colors.TABLEAU_COLORS["tab:green"]), 0.05),
+        )
+        coastline_color = kwargs.get("coastline_color", "grey")
+        view_angles = kwargs.get("view_angles", (25, -90))
+        track_color = kwargs.get("track_color", "black")
+        point_color = kwargs.get(
+            "point_color", mpl.colors.to_rgb(mpl.colors.TABLEAU_COLORS["tab:orange"])
+        )
 
-        nx, ny = 256, 512
-        X = np.linspace(-180, 10, nx)
-        Y = np.linspace(-90, 90, ny)
-        Z = f(np.linspace(-3, 3, nx), np.linspace(-3, 3, ny))
+        xlims = (self.track[:, 1].min() - radius, self.track[:, 1].max() + radius)
+        ylims = (self.track[:, 0].min() - radius, self.track[:, 0].max() + radius)
 
-        fig = plt.figure()
-        ax3d = fig.add_axes([0, 0, 1, 1], projection="3d")
+        fig = plt.figure(figsize=(height, width), dpi=150)
+        ax3d = fig.add_axes([0, 0, width, height], projection="3d")
 
         # Make an axes that we can use for mapping the data in 2d.
-        proj_ax = plt.figure().add_axes([0, 0, 1, 1], projection=ccrs.Mercator())
-        cs = proj_ax.contourf(X, Y, Z, transform=ccrs.PlateCarree(), alpha=0.4)
-
-        for zlev, collection in zip(cs.levels, cs.collections):
-            paths = collection.get_paths()
-            # Figure out the matplotlib transform to take us from the X, Y coordinates
-            # to the projection coordinates.
-            trans_to_proj = collection.get_transform() - proj_ax.transData
-
-            paths = [trans_to_proj.transform_path(path) for path in paths]
-            verts3d = [
-                np.concatenate(
-                    [path.vertices, np.tile(zlev, [path.vertices.shape[0], 1])], axis=1
-                )
-                for path in paths
-            ]
-            codes = [path.codes for path in paths]
-            pc = Poly3DCollection([])
-            pc.set_verts_and_codes(verts3d, codes)
-
-            # Copy all of the parameters from the contour (like colors) manually.
-            # Ideally we would use update_from, but that also copies things like
-            # the transform, and messes up the 3d plot.
-            pc.set_facecolor(collection.get_facecolor())
-            pc.set_edgecolor(collection.get_edgecolor())
-            pc.set_alpha(collection.get_alpha())
-
-            ax3d.add_collection3d(pc)
+        proj_ax = plt.figure().add_axes(
+            [0, 0, width, height], projection=ccrs.PlateCarree()
+        )
 
         proj_ax.autoscale_view()
 
-        ax3d.set_xlim(*proj_ax.get_xlim())
-        ax3d.set_ylim(*proj_ax.get_ylim())
-        ax3d.set_zlim(Z.min(), Z.max())
+        ax3d.view_init(*view_angles)
+        ax3d.set_xlim(xlims)
+        ax3d.set_ylim(ylims)
+        # ax3d.set_xlim(*proj_ax.get_xlim())
+        # ax3d.set_ylim(*proj_ax.get_ylim())
+        ax3d.set_zlim(0, 0.5)
+        ax3d.set_box_aspect((width, height * 2, 0.5))
+        ax3d.xaxis.pane.fill = False
+        ax3d.yaxis.pane.fill = False
+        ax3d.xaxis.pane.set_edgecolor((1, 1, 1, 0))
+        ax3d.yaxis.pane.set_edgecolor((1, 1, 1, 0))
+        ax3d.zaxis.set_pane_color(background_color)
 
+        ax3d.grid(False)
+        ax3d.zaxis.line.set_lw(0.0)
+        ax3d.set_zticks([])
+
+        ax3d.scatter3D(
+            self.track[::step, 1],
+            self.track[::step, 0],
+            np.ones_like(self.track[::step, 0]) * point_height,
+            c=point_color,
+            s=point_size,
+            marker="2",
+        )
+        ax3d.plot3D(
+            self.track[:, 1],
+            self.track[:, 0],
+            np.ones_like(self.track[:, 0]) * point_height,
+            c=track_color,
+            # alpha=0.5,
+        )
         # Now add coastlines.
         concat = lambda iterable: list(itertools.chain.from_iterable(iterable))
 
@@ -1146,6 +1243,9 @@ class tc_track:
 
         feature = cartopy.feature.NaturalEarthFeature("physical", "land", "110m")
         geoms = feature.geometries()
+
+        proj_ax.set_xlim(xlims)
+        proj_ax.set_ylim(ylims)
 
         # Use the convenience (private) method to get the extent as a shapely geometry.
         boundary = proj_ax._get_extent_geom()
@@ -1160,11 +1260,161 @@ class tc_track:
         # Convert the geometries to paths so we can use them in matplotlib.
         paths = concat(geos_to_path(geom) for geom in geoms)
         polys = concat(path.to_polygons() for path in paths)
-        lc = PolyCollection(polys, edgecolor="black", facecolor="green", closed=True)
-        ax3d.add_collection3d(lc, zs=ax3d.get_zlim()[0])
+        lc = PolyCollection(
+            polys,
+            edgecolor=coastline_color,
+            facecolor=land_color,
+            closed=True,
+        )
+        ax3d.add_collection3d(lc, zs=0)
 
         plt.close(proj_ax.figure)
         plt.show()
+
+    def plot3D(self, var, timestamps, **kwargs):
+        """
+        Function to plot 3D data on a map, showing the variable in 3D for the given timestamps
+
+        Based off of:
+        https://stackoverflow.com/questions/13570287/image-overlay-in-3d-plot
+        https://stackoverflow.com/questions/23785408/3d-cartopy-similar-to-matplotlib-basemap
+        https://stackoverflow.com/questions/48269014/contourf-in-3d-cartopy%5D
+        Parameters
+        ----------
+        var : STR, required
+            Variable to plot
+
+        timestamp : STR, required
+            Timestamp to plot
+
+        Returns
+        -------
+        None
+
+        """
+
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, f"{kwargs.get('ds_type', 'rad')}_ds"):
+            print("Data not yet loaded - trying to load it now...")
+            self.load_data(**kwargs)
+
+        data = getattr(self, f"{kwargs.get('ds_type', 'rad')}_ds")[var]
+
+        # def f(x, y):
+        #     x, y = np.meshgrid(x, y)
+        #     return (1 - x / 2 + x**5 + y**3 + x * y**2) * np.exp(-(x**2) - y**2)
+
+        # nx, ny = 256, 512
+        # X = np.linspace(-180, 10, nx)
+        # Y = np.linspace(-90, 90, ny)
+        # Z = f(np.linspace(-3, 3, nx), np.linspace(-3, 3, ny))
+
+        fig, ax3d = plt.subplots(subplot_kw={"projection": "3d"})
+        # ax3d = fig.add_axes([0, 0, 1, 1], projection="3d")
+
+        # Make an axes that we can use for mapping the data in 2d.
+        # proj_ax = plt.figure().add_axes([0, 0, 1, 1], projection=ccrs.Mercator())
+
+        lat_coord, lon_coord, time_coord, level_coord = get_coord_vars(data)
+
+        for timestamp in timestamps:
+            minn, maxx = (
+                data.sel({time_coord: timestamp}).min().values,
+                data.sel({time_coord: timestamp}).max().values,
+            )
+            if level_coord:
+                for level in data[level_coord].values:
+                    z = int(level)
+
+                    level_data = data.sel({time_coord: timestamp, level_coord: level})
+                    level_data = level_data.where(~level_data.isnull(), drop=True)
+
+                    # minn, maxx = color_data.min(), color_data.max()
+                    norm = mpl.colors.Normalize(vmin=minn, vmax=maxx)
+                    m = plt.cm.ScalarMappable(norm=norm, cmap="seismic")
+                    m.set_array([])
+                    fcolors = m.to_rgba(level_data.values, alpha=0.10)
+
+                    X, Y = np.meshgrid(
+                        level_data[lon_coord].values, level_data[lat_coord].values[::-1]
+                    )
+
+                    ax3d.plot_surface(
+                        X,
+                        Y,
+                        np.ones(X.shape) * z,
+                        facecolors=fcolors,
+                        vmin=minn,
+                        vmax=maxx,
+                        shade=False,
+                        # transform=ccrs.PlateCarree(),
+                        # alpha=0.05,
+                    )
+                fig.colorbar(m, ax=ax3d, orientation="vertical")
+                ax3d.invert_zaxis()
+                # fig2, ax2 = plt.subplots()
+                # ax2.imshow(color_data, cmap="viridis")
+
+        # cs = proj_ax.contourf(X, Y, Z, transform=ccrs.PlateCarree(), alpha=0.4)
+
+        # for zlev, collection in zip(cs.levels, cs.collections):
+        #     paths = collection.get_paths()
+        #     # Figure out the matplotlib transform to take us from the X, Y coordinates
+        #     # to the projection coordinates.
+        #     trans_to_proj = collection.get_transform() - proj_ax.transData
+
+        #     paths = [trans_to_proj.transform_path(path) for path in paths]
+        #     verts3d = [
+        #         np.concatenate(
+        #             [path.vertices, np.tile(zlev, [path.vertices.shape[0], 1])], axis=1
+        #         )
+        #         for path in paths
+        #     ]
+        #     codes = [path.codes for path in paths]
+        #     pc = Poly3DCollection([])
+        #     pc.set_verts_and_codes(verts3d, codes)
+
+        #     # Copy all of the parameters from the contour (like colors) manually.
+        #     # Ideally we would use update_from, but that also copies things like
+        #     # the transform, and messes up the 3d plot.
+        #     pc.set_facecolor(collection.get_facecolor())
+        #     pc.set_edgecolor(collection.get_edgecolor())
+        #     pc.set_alpha(collection.get_alpha())
+
+        #     ax3d.add_collection3d(pc)
+
+        # proj_ax.autoscale_view()
+
+        # ax3d.set_xlim(*proj_ax.get_xlim())
+        # ax3d.set_ylim(*proj_ax.get_ylim())
+        # ax3d.set_zlim(data[level_coord].min().values, data[level_coord].max().values)
+
+        # # Now add coastlines.
+        # concat = lambda iterable: list(itertools.chain.from_iterable(iterable))
+
+        # target_projection = proj_ax.projection
+
+        # feature = cartopy.feature.NaturalEarthFeature("physical", "land", "110m")
+        # geoms = feature.geometries()
+
+        # # Use the convenience (private) method to get the extent as a shapely geometry.
+        # boundary = proj_ax._get_extent_geom()
+
+        # # Transform the geometries from PlateCarree into the desired projection.
+        # geoms = [
+        #     target_projection.project_geometry(geom, feature.crs) for geom in geoms
+        # ]
+        # # Clip the geometries based on the extent of the map (because mpl3d can't do it for us)
+        # geoms = [boundary.intersection(geom) for geom in geoms]
+
+        # # Convert the geometries to paths so we can use them in matplotlib.
+        # paths = concat(geos_to_path(geom) for geom in geoms)
+        # polys = concat(path.to_polygons() for path in paths)
+        # lc = PolyCollection(polys, edgecolor="black", facecolor="green", closed=True)
+        # ax3d.add_collection3d(lc, zs=ax3d.get_zlim()[0])
+
+        # plt.close(proj_ax.figure)
+        # plt.show()
 
         pass
 

@@ -18,9 +18,12 @@ import matplotlib.pyplot as plt
 # Backend Libraries
 import xarray as xr
 
-from utils import toolbox, constants, data_lib as dlib
+from utils import toolbox, constants
+from utils import data_lib as dlib
 
-full_data = toolbox.read_hist_track_file()
+full_data = toolbox.read_hist_track_file(
+    tracks_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/"
+)
 # %%
 data_2005 = full_data[full_data.ISO_TIME.dt.year == 2005]
 katrina = data_2005[data_2005.NAME == "KATRINA"]
@@ -39,22 +42,40 @@ data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 
 dc = dlib.Data_Collection(data_dir)
 # %%
+track.process_data_collection(
+    dc,
+    ignore_vars=[
+        "specific_cloud_ice_water_content",
+        "specific_cloud_liquid_water_content",
+        "specific_rain_water_content",
+        "specific_snow_water_content",
+        # "land_sea_mask",
+    ],
+    masktype="rect",
+    circum_points=30,
+)
 
-# track.process_data_collection(
-#     dc,
-#     ignore_vars=[
-#         "specific_cloud_ice_water_content",
-#         "specific_cloud_liquid_water_content",
-#         "specific_rain_water_content",
-#         "specific_snow_water_content",
-#         "land_sea_mask",
-#     ],
-#     masktype="rect",
-#     circum_points=20,
-# )
 
-track.load_data(ds_type="rect")
+track.plotTrack()
 
+# %%
+
+# track.load_data(ds_type="rect")
+# track.plot3D(var="v", timestamps=[track.timestamps[30]], ds_type="rect")
+
+# # %%
+# import numpy as np
+
+# for time in track.rect_ds.time:
+#     fig, ax = plt.subplots()
+#     idx = np.isin(track.timestamps, time)
+#     x = track.track[idx][0, 1]
+#     y = track.track[idx][0, 0]
+#     print(f'x:{x}  y:"{y}')
+#     track.rect_ds.sel(time=time).isel(level=0).d.plot.imshow(ax=ax)
+#     ax.scatter(x, y, c="black", alpha=0.5, s=100)
+#     plt.show()
+#     plt.close()
 
 # meteo_data = xr.open_dataset(data_path).isel(plev=0)
 # # %%

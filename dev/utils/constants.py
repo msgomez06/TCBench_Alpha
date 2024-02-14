@@ -150,8 +150,8 @@ ibtracs_cols = track_cols(  # Storm ID number
     # US Automated Tropical Cyclone Forecasting System ID
     USA_ATCF_ID=str,
     # Intensity and Pressure
-    WMO_WIND=str,
-    WMO_PRES=str,
+    USA_WIND=str,
+    USA_PRES=str,
     # Metadata for constructing track objects
     __META={
         "UID": "SID",

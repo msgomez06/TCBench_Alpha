@@ -596,7 +596,8 @@ class tc_track:
 
         point = self.track[self.timestamps == timestamp][0]
 
-        temp_mask = mask_getter(point, **kwargs)
+        # Get the mask and flip the y axis to match the data
+        temp_mask = mask_getter(point, **kwargs)[:,::-1,:]
 
         # Tile the mask if the number of levels is greater than 1
         num_levels = kwargs.get("num_levels", 1)
@@ -608,11 +609,8 @@ class tc_track:
         else:
             mask = np.vstack([mask, temp_mask])
 
-        # flip lat because reasons
-        if num_levels > 1:
-            mask = mask[:,:,::-1,:]
         # Squeeze the mask to remove unnecessary dimensions. Flip y because reasons?
-        mask = mask.squeeze()[::-1, :]
+        mask = mask.squeeze()
 
         return mask
 
@@ -907,7 +905,7 @@ class tc_track:
                 if var in self.__getattribute__(f"{ds_type}_ds").data_vars:
                     print(f"Variable {var} already in dataset. Skipping...")
                 else:
-                    print(f"Adding variable {var} to processing list...")
+                    # print(f"Adding variable {var} to processing list...")
                     if not var_list:
                         var_list = [var]
                     else:
@@ -1110,7 +1108,7 @@ class tc_track:
             # Check if the dataset exists on disk
             if os.path.exists(self.filepath + f"{self.uid}.{ds_type}.nc"):
                 # If it does, load the dataset
-                print("Loading dataset...")
+                # print("Loading dataset...")
                 setattr(
                     self,
                     f"{ds_type}_ds",
@@ -1293,28 +1291,22 @@ class tc_track:
 
         """
 
+        facecolor = kwargs.get("facecolor", (0.3, 0.3, 0.3))
+        view_angles = kwargs.get("view_angles", (25, -45))
+
         # Check if the dataset doesn't exist in the object
         if not hasattr(self, f"{kwargs.get('ds_type', 'rad')}_ds"):
             print("Data not yet loaded - trying to load it now...")
             self.load_data(**kwargs)
 
+        alpha = kwargs.get("alpha", 0.3)
+
         data = getattr(self, f"{kwargs.get('ds_type', 'rad')}_ds")[var]
 
-        # def f(x, y):
-        #     x, y = np.meshgrid(x, y)
-        #     return (1 - x / 2 + x**5 + y**3 + x * y**2) * np.exp(-(x**2) - y**2)
-
-        # nx, ny = 256, 512
-        # X = np.linspace(-180, 10, nx)
-        # Y = np.linspace(-90, 90, ny)
-        # Z = f(np.linspace(-3, 3, nx), np.linspace(-3, 3, ny))
 
         fig, ax3d = plt.subplots(subplot_kw={"projection": "3d"})
-        # ax3d = fig.add_axes([0, 0, 1, 1], projection="3d")
-
-        # Make an axes that we can use for mapping the data in 2d.
-        # proj_ax = plt.figure().add_axes([0, 0, 1, 1], projection=ccrs.Mercator())
-
+        fig.set_facecolor(facecolor)
+        ax3d.set_facecolor(facecolor)
         lat_coord, lon_coord, time_coord, level_coord = get_coord_vars(data)
 
         for timestamp in timestamps:
@@ -1329,11 +1321,15 @@ class tc_track:
                     level_data = data.sel({time_coord: timestamp, level_coord: level})
                     level_data = level_data.where(~level_data.isnull(), drop=True)
 
-                    # minn, maxx = color_data.min(), color_data.max()
                     norm = mpl.colors.Normalize(vmin=minn, vmax=maxx)
                     m = plt.cm.ScalarMappable(norm=norm, cmap="seismic")
                     m.set_array([])
-                    fcolors = m.to_rgba(level_data.values, alpha=0.10)
+                    fcolors = m.to_rgba(level_data.values)
+                    
+                    anomaly = np.abs(level_data.values - level_data.values.mean())
+                    anomaly = (anomaly / anomaly.max())**1.5
+                    
+                    fcolors[..., 3] = anomaly
 
                     X, Y = np.meshgrid(
                         level_data[lon_coord].values, level_data[lat_coord].values[::-1]
@@ -1347,76 +1343,28 @@ class tc_track:
                         vmin=minn,
                         vmax=maxx,
                         shade=False,
-                        # transform=ccrs.PlateCarree(),
-                        # alpha=0.05,
                     )
-                fig.colorbar(m, ax=ax3d, orientation="vertical")
-                ax3d.invert_zaxis()
-                # fig2, ax2 = plt.subplots()
-                # ax2.imshow(color_data, cmap="viridis")
-
-        # cs = proj_ax.contourf(X, Y, Z, transform=ccrs.PlateCarree(), alpha=0.4)
-
-        # for zlev, collection in zip(cs.levels, cs.collections):
-        #     paths = collection.get_paths()
-        #     # Figure out the matplotlib transform to take us from the X, Y coordinates
-        #     # to the projection coordinates.
-        #     trans_to_proj = collection.get_transform() - proj_ax.transData
-
-        #     paths = [trans_to_proj.transform_path(path) for path in paths]
-        #     verts3d = [
-        #         np.concatenate(
-        #             [path.vertices, np.tile(zlev, [path.vertices.shape[0], 1])], axis=1
-        #         )
-        #         for path in paths
-        #     ]
-        #     codes = [path.codes for path in paths]
-        #     pc = Poly3DCollection([])
-        #     pc.set_verts_and_codes(verts3d, codes)
-
-        #     # Copy all of the parameters from the contour (like colors) manually.
-        #     # Ideally we would use update_from, but that also copies things like
-        #     # the transform, and messes up the 3d plot.
-        #     pc.set_facecolor(collection.get_facecolor())
-        #     pc.set_edgecolor(collection.get_edgecolor())
-        #     pc.set_alpha(collection.get_alpha())
-
-        #     ax3d.add_collection3d(pc)
-
-        # proj_ax.autoscale_view()
-
-        # ax3d.set_xlim(*proj_ax.get_xlim())
-        # ax3d.set_ylim(*proj_ax.get_ylim())
-        # ax3d.set_zlim(data[level_coord].min().values, data[level_coord].max().values)
-
-        # # Now add coastlines.
-        # concat = lambda iterable: list(itertools.chain.from_iterable(iterable))
-
-        # target_projection = proj_ax.projection
-
-        # feature = cartopy.feature.NaturalEarthFeature("physical", "land", "110m")
-        # geoms = feature.geometries()
-
-        # # Use the convenience (private) method to get the extent as a shapely geometry.
-        # boundary = proj_ax._get_extent_geom()
-
-        # # Transform the geometries from PlateCarree into the desired projection.
-        # geoms = [
-        #     target_projection.project_geometry(geom, feature.crs) for geom in geoms
-        # ]
-        # # Clip the geometries based on the extent of the map (because mpl3d can't do it for us)
-        # geoms = [boundary.intersection(geom) for geom in geoms]
-
-        # # Convert the geometries to paths so we can use them in matplotlib.
-        # paths = concat(geos_to_path(geom) for geom in geoms)
-        # polys = concat(path.to_polygons() for path in paths)
-        # lc = PolyCollection(polys, edgecolor="black", facecolor="green", closed=True)
-        # ax3d.add_collection3d(lc, zs=ax3d.get_zlim()[0])
-
-        # plt.close(proj_ax.figure)
-        # plt.show()
-
-        pass
+                    
+                
+            ax3d.xaxis.pane.fill = False
+            ax3d.yaxis.pane.fill = False
+            ax3d.zaxis.pane.fill = False
+            ax3d.xaxis.pane.set_edgecolor(facecolor)
+            ax3d.yaxis.pane.set_edgecolor(facecolor)
+            ax3d.zaxis.pane.set_edgecolor(facecolor)
+            ax3d.xaxis.line.set_color('white')
+            ax3d.yaxis.line.set_color('white')
+            ax3d.zaxis.line.set_color('white')
+            ax3d.tick_params(colors='white')
+            ax3d.view_init(*view_angles)
+            ax3d.grid(False)
+            cbar = fig.colorbar(m, ax=ax3d, orientation="vertical")
+            cbar.ax.yaxis.set_tick_params(color='white')
+            plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white')
+            ax3d.invert_zaxis()
+            fig.tight_layout()
+            plt.show()
+            plt.close()
 
     # # This will be eliminated later
     # def add_var_from_dataset(self, data, **kwargs):

@@ -41,7 +41,7 @@ data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 # data_path = data_dir + "legacy_files/gpot/gpot_2005.nc"
 
 dc = dlib.Data_Collection(data_dir)
-# # %%
+# %%
 # track.process_data_collection(
 #     dc,
 #     ignore_vars=[
@@ -55,12 +55,38 @@ dc = dlib.Data_Collection(data_dir)
 #     circum_points=30,
 # )
 
-track.plotTrack()
+# %%
+track.plot_track()
 
 # %%
 
 track.load_data(ds_type="rect")
-#%%
-track.plot3D(var="r", timestamps=[track.timestamps[30]], ds_type="rect", alpha=0.25)
+# %%
+track.plot3D(
+    var="q",
+    timestamps=[track.timestamps[30]],
+    ds_type="rect",
+    alpha=0.25,
+    ignore_levels=[
+        # 1000,
+        # 925,
+        # 850,
+        # 700,
+        # 600,
+        # 500,
+        # 400,
+        # 300,
+        # 200,
+        150,
+        70,
+        50,
+        30,
+        20,
+        10,
+    ],
+    figsize=(4, 6),
+)
+
+# # %%
 
 # %%

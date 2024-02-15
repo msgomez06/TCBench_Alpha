@@ -262,6 +262,30 @@ def get_coord_vars(dataset):
     return lat_coord, lon_coord, time_coord, level_coord
 
 
+def hurricane_symbol():
+    # Code to generate a hurricane symbol marker for plotting
+    # Code taken from:
+    # https://stackoverflow.com/questions/44726675/custom-markers-using-python-matplotlib
+    u = np.array(
+        [
+            [2.444, 7.553],
+            [0.513, 7.046],
+            [-1.243, 5.433],
+            [-2.353, 2.975],
+            [-2.578, 0.092],
+            [-2.075, -1.795],
+            [-0.336, -2.870],
+            [2.609, -2.016],
+        ]
+    )
+    u[:, 0] -= 0.098
+    codes = [1] + [2] * (len(u) - 2) + [2]
+    u = np.append(u, -u[::-1], axis=0)
+    codes += codes
+
+    return mpl.path.Path(3 * u, codes, closed=False)
+
+
 # %% Data Processing / Preprocessing Library
 """
 This cell contains the following classes and functions:
@@ -326,8 +350,6 @@ def read_hist_track_file(**kwargs):
             )
             data["ISO_TIME"] = pd.to_datetime(data["ISO_TIME"])
 
-
-
         elif backend == "meteo_france":
             data = pd.read_csv(
                 handle,
@@ -352,7 +374,6 @@ def read_hist_track_file(**kwargs):
         else:
             data = backend(handle)
 
-    
     if lon_mode == 360:
         data["LON"] = data["LON"].apply(lambda x: x + 360 if x < 0 else x)
     elif lon_mode == 180:
@@ -597,7 +618,7 @@ class tc_track:
         point = self.track[self.timestamps == timestamp][0]
 
         # Get the mask and flip the y axis to match the data
-        temp_mask = mask_getter(point, **kwargs)[:,::-1,:]
+        temp_mask = mask_getter(point, **kwargs)[:, ::-1, :]
 
         # Tile the mask if the number of levels is greater than 1
         num_levels = kwargs.get("num_levels", 1)
@@ -756,7 +777,9 @@ class tc_track:
                         combine="nested",
                         parallel=True,
                     )
-                    print(temp_ds)
+
+                    # Select the non-null data from the temporary dataset
+                    temp_ds = temp_ds.where(~temp_ds.isnull().compute(), drop=True)
 
                     # calculate the encoding for the final dataset
                     encoding = {}
@@ -910,8 +933,8 @@ class tc_track:
                         var_list = [var]
                     else:
                         var_list.append(var)
-        elif var_list is None: # add all the datavars to the list
-           var_list = list(data.data_vars)
+        elif var_list is None:  # add all the datavars to the list
+            var_list = list(data.data_vars)
 
         if var_list is not None:
             data = data[var_list]
@@ -959,8 +982,6 @@ class tc_track:
             del data
             delattr(self, f"{ds_type}_ds")
             gc.collect()
-
-
 
         # else:
         #     # If the dataset doesn't exist in the object, add all variables
@@ -1121,7 +1142,7 @@ class tc_track:
                     " with a data collection object as an argument."
                 )
 
-    def plotTrack(self, **kwargs):
+    def plot_track(self, **kwargs):
         """
 
         Parameters
@@ -1170,8 +1191,8 @@ class tc_track:
         """
 
         width, height = kwargs.get("figsize", (6, 2))
-        point_height = kwargs.get("height", 0.0)
-        point_size = kwargs.get("point_size", 150)
+        point_height = kwargs.get("height", 0)
+        point_size = kwargs.get("point_size", 300)
         step = kwargs.get("step", 6)
         radius = kwargs.get("radius", 20)
         background_color = kwargs.get(
@@ -1188,6 +1209,11 @@ class tc_track:
         point_color = kwargs.get(
             "point_color", mpl.colors.to_rgb(mpl.colors.TABLEAU_COLORS["tab:orange"])
         )
+        convert_to_180 = kwargs.get("convert_to_180", True)
+        if convert_to_180:
+            self.track[:, 1][self.track[:, 1] > 180] = (
+                self.track[:, 1][self.track[:, 1] > 180] - 360
+            )
 
         xlims = (self.track[:, 1].min() - radius, self.track[:, 1].max() + radius)
         ylims = (self.track[:, 0].min() - radius, self.track[:, 0].max() + radius)
@@ -1225,7 +1251,7 @@ class tc_track:
             np.ones_like(self.track[::step, 0]) * point_height,
             c=point_color,
             s=point_size,
-            marker="2",
+            marker=hurricane_symbol(),
         )
         ax3d.plot3D(
             self.track[:, 1],
@@ -1290,9 +1316,11 @@ class tc_track:
         None
 
         """
-
+        ignore_levels = kwargs.get("ignore_levels", None)
         facecolor = kwargs.get("facecolor", (0.3, 0.3, 0.3))
         view_angles = kwargs.get("view_angles", (25, -45))
+        figsize = kwargs.get("figsize", (4, 6))
+        dpi = kwargs.get("dpi", 150)
 
         # Check if the dataset doesn't exist in the object
         if not hasattr(self, f"{kwargs.get('ds_type', 'rad')}_ds"):
@@ -1300,11 +1328,20 @@ class tc_track:
             self.load_data(**kwargs)
 
         alpha = kwargs.get("alpha", 0.3)
-
         data = getattr(self, f"{kwargs.get('ds_type', 'rad')}_ds")[var]
 
+        if ignore_levels:
+            data = data.sel(
+                {
+                    kwargs.get("level_coord", "level"): ~data[
+                        kwargs.get("level_coord", "level")
+                    ].isin(ignore_levels)
+                }
+            )
 
-        fig, ax3d = plt.subplots(subplot_kw={"projection": "3d"})
+        fig, ax3d = plt.subplots(
+            figsize=figsize, dpi=dpi, subplot_kw={"projection": "3d"}
+        )
         fig.set_facecolor(facecolor)
         ax3d.set_facecolor(facecolor)
         lat_coord, lon_coord, time_coord, level_coord = get_coord_vars(data)
@@ -1325,10 +1362,10 @@ class tc_track:
                     m = plt.cm.ScalarMappable(norm=norm, cmap="seismic")
                     m.set_array([])
                     fcolors = m.to_rgba(level_data.values)
-                    
+
                     anomaly = np.abs(level_data.values - level_data.values.mean())
-                    anomaly = (anomaly / anomaly.max())**1.5
-                    
+                    anomaly = (anomaly / anomaly.max()) ** 1.5
+
                     fcolors[..., 3] = anomaly
 
                     X, Y = np.meshgrid(
@@ -1344,23 +1381,41 @@ class tc_track:
                         vmax=maxx,
                         shade=False,
                     )
-                    
-                
+
             ax3d.xaxis.pane.fill = False
             ax3d.yaxis.pane.fill = False
             ax3d.zaxis.pane.fill = False
             ax3d.xaxis.pane.set_edgecolor(facecolor)
             ax3d.yaxis.pane.set_edgecolor(facecolor)
             ax3d.zaxis.pane.set_edgecolor(facecolor)
-            ax3d.xaxis.line.set_color('white')
-            ax3d.yaxis.line.set_color('white')
-            ax3d.zaxis.line.set_color('white')
-            ax3d.tick_params(colors='white')
+            ax3d.xaxis.line.set_color("white")
+            ax3d.yaxis.line.set_color("white")
+            ax3d.zaxis.line.set_color("white")
+            ax3d.tick_params(axis="z", colors="white", pad=-1, labelsize=6)
+            ax3d.tick_params(
+                axis="x",
+                colors="white",
+                pad=-5,
+                labelrotation=view_angles[0],
+                labelsize=6,
+            )
+            ax3d.tick_params(
+                axis="y",
+                colors="white",
+                pad=-5,
+                labelrotation=-view_angles[0],
+                labelsize=6,
+            )
+            # ax3d.xaxis._axinfo["tick"]["space_factor"] = 0.2
+            # ax3d.yaxis._axinfo["tick"]["space_factor"] = 0.2
             ax3d.view_init(*view_angles)
             ax3d.grid(False)
-            cbar = fig.colorbar(m, ax=ax3d, orientation="vertical")
-            cbar.ax.yaxis.set_tick_params(color='white')
-            plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white')
+            cbar = fig.colorbar(m, ax=ax3d, orientation="horizontal", pad=0.1)
+            cbar.ax.xaxis.set_tick_params(color="white")
+            cbar.set_label(
+                f"{data.attrs['long_name']}, {data.attrs['units']}", color="white"
+            )
+            plt.setp(plt.getp(cbar.ax.axes, "xticklabels"), color="white", fontsize=6)
             ax3d.invert_zaxis()
             fig.tight_layout()
             plt.show()

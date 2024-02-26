@@ -14,6 +14,7 @@ Script to test handling of a single track
 import os
 import sys
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 # Backend Libraries
 import xarray as xr
@@ -55,18 +56,22 @@ dc = dlib.Data_Collection(data_dir)
 #     circum_points=30,
 # )
 
-# %%
-track.plot_track()
+# # %%
+# track.plot_track(
+#     save_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/track.svg",
+#     track_color="red",
+#     point_color="black",
+#     step=-8,
+# )
 
 # %%
 
 track.load_data(ds_type="rect")
 # %%
-track.plot3D(
-    var="q",
-    timestamps=[track.timestamps[30]],
+track.animate_data(
+    "vo",
     ds_type="rect",
-    alpha=0.25,
+    cmap="seismic",
     ignore_levels=[
         # 1000,
         # 925,
@@ -84,8 +89,126 @@ track.plot3D(
         20,
         10,
     ],
-    figsize=(4, 6),
 )
+# track.plot3D(
+#     var="d",
+#     timestamps=[track.timestamps[30]],
+#     ds_type="rect",
+#     alpha=0.25,
+#     ignore_levels=[
+#         # 1000,
+#         # 925,
+#         # 850,
+#         # 700,
+#         # 600,
+#         # 500,
+#         # 400,
+#         # 300,
+#         # 200,
+#         150,
+#         70,
+#         50,
+#         30,
+#         20,
+#         10,
+#     ],
+#     figsize=(4, 6),
+#     cmap="seismic",
+#     # facecolor="white",
+#     # text_color="black",
+# )
+# # %%
+# track.rect_ds.isel(time=30).where(
+#     ~track.rect_ds.isel(time=30).isnull(), drop=True
+# ).msl.plot.imshow(cmap="winter_r")
+
+# # %%
+# fig, ax = plt.subplots(figsize=(4, 6), dpi=300)
+# plot_data = track.rect_ds.isel(time=30)
+# image = plot_data.where(~plot_data.isnull(), drop=True).msl.plot.imshow(
+#     ax=ax, add_colorbar=False, cmap="viridis_r"
+# )
+# fig.set_facecolor((0.3, 0.3, 0.3))
+# ax.set_facecolor((0.3, 0.3, 0.3))
+# ax.spines["top"].set_color("white")
+# ax.spines["right"].set_color("white")
+# ax.spines["bottom"].set_color("white")
+# ax.spines["left"].set_color("white")
+# ax.tick_params(axis="x", colors="white")
+# ax.tick_params(axis="y", colors="white")
+# ax.title.set_color("white")
+# ax.yaxis.label.set_color("white")
+# ax.xaxis.label.set_color("white")
+# cbar = fig.colorbar(
+#     image, ax=ax, label="Mean Sea Level Pressure", orientation="horizontal"
+# )
+# cbar.ax.xaxis.label.set_color("white")
+# cbar.ax.tick_params(axis="x", colors="white", labelsize=8)
+# cbar.ax.spines["top"].set_color("white")
+# cbar.ax.spines["right"].set_color("white")
+# cbar.ax.spines["bottom"].set_color("white")
+# plt.show()
+
+# # %%
+# fig, ax = plt.subplots(figsize=(4, 6), dpi=300)
+# valid_data = plot_data.where(~plot_data.isnull(), drop=True)
+# wind = (valid_data.u10**2 + valid_data.v10**2) ** 0.5
+# wind.attrs["units"] = "m/s"
+# wind.attrs["long_name"] = "2m Wind Speed"
+# image = wind.plot.imshow(cmap="plasma", add_colorbar=False)
+# fig.set_facecolor((0.3, 0.3, 0.3))
+# ax.set_facecolor((0.3, 0.3, 0.3))
+# ax.spines["top"].set_color("white")
+# ax.spines["right"].set_color("white")
+# ax.spines["bottom"].set_color("white")
+# ax.spines["left"].set_color("white")
+# ax.tick_params(axis="x", colors="white")
+# ax.tick_params(axis="y", colors="white")
+# ax.title.set_color("white")
+# ax.yaxis.label.set_color("white")
+# ax.xaxis.label.set_color("white")
+# cbar = fig.colorbar(image, ax=ax, label="2m Wind Speed [m/s]", orientation="horizontal")
+# cbar.ax.xaxis.label.set_color("white")
+# cbar.ax.tick_params(axis="x", colors="white", labelsize=8)
+# cbar.ax.spines["top"].set_color("white")
+# cbar.ax.spines["right"].set_color("white")
+# cbar.ax.spines["bottom"].set_color("white")
+# plt.show()
+# # %%
+
+# fig, axes = plt.subplots(2, 1, figsize=(10, 4), dpi=200)
+# fig.set_facecolor((0.3, 0.3, 0.3))
+
+
+# min_pressure = track.rect_ds.msl.min(dim=["latitude", "longitude"])
+# pressure_plot = min_pressure.plot(ax=axes[0],
+#                                   color = mpl.colors.TABLEAU_COLORS["tab:pink"])
+
+# max_wind = (track.rect_ds.u10**2 + track.rect_ds.v10**2) ** 0.5
+# max_wind.attrs["units"] = "m/s"
+# max_wind.attrs["long_name"] = "Maximum 2m Wind Speed"
+# max_wind.attrs["standard_name"] = "max_wind"
+# wind_plot = max_wind.max(dim=["latitude", "longitude"]).plot(
+#     ax=axes[1], label="Max 2m Wind Speed",
+#     color=mpl.colors.TABLEAU_COLORS["tab:green"]
+# )
+
+# axes[0].set_ylabel("MSLP Min [Pa]")
+# axes[1].set_ylabel("2m Wind Speed Max [m/s]")
+
+# for ax in axes:
+#     ax.set_xlabel("Date")
+#     ax.set_facecolor((0.3, 0.3, 0.3))
+#     ax.spines["top"].set_color("white")
+#     ax.spines["right"].set_color("white")
+#     ax.spines["bottom"].set_color("white")
+#     ax.spines["left"].set_color("white")
+#     ax.tick_params(axis="x", colors="white")
+#     ax.tick_params(axis="y", colors="white")
+#     ax.title.set_color("white")
+#     ax.yaxis.label.set_color("white")
+#     ax.xaxis.label.set_color("white")
+# fig.tight_layout()
 
 # # %%
 

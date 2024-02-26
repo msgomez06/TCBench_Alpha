@@ -573,10 +573,10 @@ if __name__ == "__main__":
     # Test running the data collection class
     dc = Data_Collection(default)
 
-    # # Test the variable availability function
-    # dc.variable_availability(
-    #     save_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
-    # )
+    # Test the variable availability function
+    dc.variable_availability(
+        # save_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+    )
 
     print(dc.meta_dfs)
 

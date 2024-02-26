@@ -31,6 +31,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import PolyCollection
 from mpl_toolkits.mplot3d.axes3d import Axes3D
 import matplotlib as mpl
+from matplotlib.animation import FuncAnimation
 
 
 # TCBench Libraries
@@ -983,131 +984,6 @@ class tc_track:
             delattr(self, f"{ds_type}_ds")
             gc.collect()
 
-        # else:
-        #     # If the dataset doesn't exist in the object, add all variables
-        #     # print("Creating dataset...")
-
-        #     attrs = data.attrs
-
-        #     # Retrieve regridder if necessary
-        #     regridder = get_regrider(dataset=data, **kwargs)
-
-        #     if regridder is not None:
-        #         data = regridder(data)
-
-        #     level_coord = kwargs.get("level_coord", None)
-        #     if level_coord:
-        #         num_levels = data[level_coord].shape[0]
-
-        #     mask = self.get_mask(num_levels=num_levels, **kwargs)
-        #     # mask = self.get_mask_series(valid_steps, **kwargs)
-
-        #     data = data.where(mask)
-        #     data.attrs = attrs
-
-        #     setattr(self, f"{ds_type}_ds", data)
-
-        #     encoding = {}
-        #     for data_var in data.data_vars:
-        #         encoding[data_var] = {
-        #             "original_shape": data[data_var].shape,
-        #             "_FillValue": data[data_var].encoding.get("_FillValue", -32767),
-        #             "dtype": kwargs.get("dtype", np.int16),
-        #             "add_offset": data[data_var].mean().compute().values,
-        #             "scale_factor": data[data_var].std().compute().values
-        #             / kwargs.get("scale_divisor", 2000),
-        #         }
-
-        #     data.to_netcdf(
-        #         self.filepath
-        #         + f"temp_{np.where(self.timestamps == timestamp)[0][0]}.{data_var}.{self.uid}.{ds_type}.nc",
-        #         mode="w",
-        #         compute=True,
-        #         encoding=encoding,
-        #     )
-
-        #     data.close()
-        #     del data
-        #     delattr(self, f"{ds_type}_ds")
-
-        # ## TODO: update to work like part above
-        # # If the list of variables to process is not empty, process them
-        # if var_list:
-        #     # Retrieve regridder if necessary
-        #     regridder = get_regrider(dataset=data, **kwargs)
-
-        #     if regridder is not None:
-        #         data = regridder(data)
-
-        #     # # Initiate the encoding dictionary so that it can be updated in the loop
-        #     # encoding = {}
-        #     # for var in self.__getattribute__(f"{ds_type}_ds").data_vars:
-        #     #     print(var, self.__getattribute__(f"{ds_type}_ds")[var].encoding)
-        #     #     encoding[var] = {
-        #     #         "dtype": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
-        #     #             "dtype"
-        #     #         ],
-        #     #         "_FillValue": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
-        #     #             "_FillValue"
-        #     #         ],
-        #     #         "add_offset": self.__getattribute__(f"{ds_type}_ds")[var].encoding[
-        #     #             "add_offset"
-        #     #         ],
-        #     #         "scale_factor": self.__getattribute__(f"{ds_type}_ds")[
-        #     #             var
-        #     #         ].encoding["scale_factor"],
-        #     #     }
-
-        #     for var in var_list:
-        #         # print(f"Adding {var} to dataset...")
-        #         var_steps = data[var]
-        #         attrs = var_steps.attrs
-
-        #         mask = self.get_mask(num_levels=num_levels, **kwargs)
-
-        #         var_steps = var_steps.where(mask)
-
-        #         # Ensure that the attributes didn't get stripped through processing
-        #         var_steps.attrs = attrs
-
-        #         # Add the variable to the dataset
-        #         self.__getattribute__(f"{ds_type}_ds")[var] = var_steps
-
-        #         encoding[var] = {
-        #             "original_shape": var_steps.shape,
-        #             "_FillValue": var_steps.encoding.get("_FillValue", -32767),
-        #             "dtype": kwargs.get("dtype", np.int16),
-        #             "add_offset": var_steps.mean().compute().values,
-        #             "scale_factor": var_steps.std().compute().values
-        #             / kwargs.get("scale_divisor", 2000),
-        #         }
-
-        #     # self.__getattribute__(f"{ds_type}_ds").to_netcdf(
-        #     #     self.filepath + f"{self.uid}.{ds_type}.appended.nc",
-        #     #     mode="w",
-        #     #     compute=True,
-        #     #     encoding=encoding,
-        #     # )
-
-        #     # # Workaround to rewrite file with appended file
-        #     # self.__getattribute__(f"{ds_type}_ds").close()
-        #     # # Overwrite the original file with the appended file
-        #     # subprocess.run(
-        #     #     [
-        #     #         "mv",
-        #     #         "-f",
-        #     #         f"{self.filepath}{self.uid}.{ds_type}.appended.nc",
-        #     #         f"{self.filepath}{self.uid}.{ds_type}.nc",
-        #     #     ]
-        #     # )
-
-        #     # remove the var_list attribute
-        #     del var_list
-        #     delattr(self, f"{ds_type}_ds")
-        #     gc.collect()
-
-        # gc.collect()
-
     # Function to load the data from storage
     def load_data(self, **kwargs):
         """
@@ -1190,8 +1066,9 @@ class tc_track:
         https://stackoverflow.com/questions/30223161/how-to-increase-the-size-of-an-axis-stretch-in-a-3d-plot
         """
 
-        width, height = kwargs.get("figsize", (6, 2))
-        point_height = kwargs.get("height", 0)
+        save_path = kwargs.get("save_path", None)
+        width, height = kwargs.get("figsize", (10, 2.5))
+        point_height = kwargs.get("point_height", 0)
         point_size = kwargs.get("point_size", 300)
         step = kwargs.get("step", 6)
         radius = kwargs.get("radius", 20)
@@ -1218,49 +1095,16 @@ class tc_track:
         xlims = (self.track[:, 1].min() - radius, self.track[:, 1].max() + radius)
         ylims = (self.track[:, 0].min() - radius, self.track[:, 0].max() + radius)
 
-        fig = plt.figure(figsize=(height, width), dpi=150)
+        fig = plt.figure(figsize=(width, height), dpi=150)
         ax3d = fig.add_axes([0, 0, width, height], projection="3d")
 
         # Make an axes that we can use for mapping the data in 2d.
         proj_ax = plt.figure().add_axes(
             [0, 0, width, height], projection=ccrs.PlateCarree()
         )
-
         proj_ax.autoscale_view()
 
-        ax3d.view_init(*view_angles)
-        ax3d.set_xlim(xlims)
-        ax3d.set_ylim(ylims)
-        # ax3d.set_xlim(*proj_ax.get_xlim())
-        # ax3d.set_ylim(*proj_ax.get_ylim())
-        ax3d.set_zlim(0, 0.5)
-        ax3d.set_box_aspect((width, height * 2, 0.5))
-        ax3d.xaxis.pane.fill = False
-        ax3d.yaxis.pane.fill = False
-        ax3d.xaxis.pane.set_edgecolor((1, 1, 1, 0))
-        ax3d.yaxis.pane.set_edgecolor((1, 1, 1, 0))
-        ax3d.zaxis.set_pane_color(background_color)
-
-        ax3d.grid(False)
-        ax3d.zaxis.line.set_lw(0.0)
-        ax3d.set_zticks([])
-
-        ax3d.scatter3D(
-            self.track[::step, 1],
-            self.track[::step, 0],
-            np.ones_like(self.track[::step, 0]) * point_height,
-            c=point_color,
-            s=point_size,
-            marker=hurricane_symbol(),
-        )
-        ax3d.plot3D(
-            self.track[:, 1],
-            self.track[:, 0],
-            np.ones_like(self.track[:, 0]) * point_height,
-            c=track_color,
-            # alpha=0.5,
-        )
-        # Now add coastlines.
+        # Add the geodata to the plot
         concat = lambda iterable: list(itertools.chain.from_iterable(iterable))
 
         target_projection = proj_ax.projection
@@ -1293,9 +1137,108 @@ class tc_track:
         ax3d.add_collection3d(lc, zs=0)
 
         plt.close(proj_ax.figure)
+
+        ax3d.view_init(*view_angles)
+        ax3d.set_xlim(xlims)
+        ax3d.set_ylim(ylims)
+        # ax3d.set_xlim(*proj_ax.get_xlim())
+        # ax3d.set_ylim(*proj_ax.get_ylim())
+        ax3d.set_zlim(0, 0.5)
+        ax3d.set_box_aspect((width, height * 2, 0.5))
+        ax3d.xaxis.pane.fill = False
+        ax3d.yaxis.pane.fill = False
+        ax3d.xaxis.pane.set_edgecolor((1, 1, 1, 0))
+        ax3d.yaxis.pane.set_edgecolor((1, 1, 1, 0))
+        ax3d.zaxis.set_pane_color(background_color)
+
+        ax3d.grid(False)
+        ax3d.zaxis.line.set_lw(0.0)
+        ax3d.set_zticks([])
+
+        ax3d.scatter3D(
+            self.track[::step, 1],
+            self.track[::step, 0],
+            np.ones_like(self.track[::step, 0]) * point_height,
+            c=point_color,
+            s=point_size,
+            marker=hurricane_symbol(),
+            depthshade=0,
+        )
+
+        ax3d.plot3D(
+            self.track[:, 1],
+            self.track[:, 0],
+            np.ones_like(self.track[:, 0]) * point_height,
+            c=track_color,
+            # alpha=0.5,
+        )
+
+        if save_path:
+            plt.savefig(save_path, dpi=150)
         plt.show()
 
-    def plot3D(self, var, timestamps, **kwargs):
+    def animate_data(self, var, **kwargs):
+        figsize = kwargs.get("figsize", (4, 6))
+        dpi = kwargs.get("dpi", 150)
+        save_path = kwargs.get(
+            "save_path",
+            f"/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/{var}_animation.gif",
+        )
+
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, f"{kwargs.get('ds_type', 'rad')}_ds"):
+            print("Data not yet loaded - trying to load it now...")
+            self.load_data(**kwargs)
+
+        # Assert that the variable exists in the object data
+        assert (
+            var in self.__getattribute__(f"{kwargs.get('ds_type', 'rad')}_ds").data_vars
+        ), f"Variable {var} not found in dataset"
+
+        # get sanitized timestamps
+        valid_steps = sanitize_timestamps(
+            self.timestamps, self.__getattribute__(f"{kwargs.get('ds_type', 'rad')}_ds")
+        )
+
+        fig, ax = plt.subplots(
+            figsize=figsize, dpi=dpi, subplot_kw={"projection": "3d"}
+        )
+
+        minn, maxx = (
+            self.__getattribute__(f"{kwargs.get('ds_type', 'rad')}_ds")[var]
+            .min()
+            .values,
+            self.__getattribute__(f"{kwargs.get('ds_type', 'rad')}_ds")[var]
+            .max()
+            .values,
+        )
+
+        self.plot3D(var, valid_steps[0], minn=minn, maxx=maxx, fig=fig, ax=ax, **kwargs)
+
+        def update(frame):
+            ax.clear()
+            self.plot3D(
+                var,
+                valid_steps[frame],
+                add_colorbar=False,
+                minn=minn,
+                maxx=maxx,
+                fig=fig,
+                ax=ax,
+                **kwargs,
+            )
+
+        ani = FuncAnimation(
+            fig,
+            update,
+            np.arange(1, valid_steps.size, 1),
+            blit=False,
+            interval=400,
+        )
+
+        ani.save(save_path)
+
+    def plot3D(self, var, timestamp, **kwargs):
         """
         Function to plot 3D data on a map, showing the variable in 3D for the given timestamps
 
@@ -1318,9 +1261,15 @@ class tc_track:
         """
         ignore_levels = kwargs.get("ignore_levels", None)
         facecolor = kwargs.get("facecolor", (0.3, 0.3, 0.3))
+        text_color = kwargs.get("text_color", "white")
         view_angles = kwargs.get("view_angles", (25, -45))
         figsize = kwargs.get("figsize", (4, 6))
         dpi = kwargs.get("dpi", 150)
+        cmap = kwargs.get("cmap", "seismic")
+        fig = kwargs.get("fig", None)
+        ax3d = kwargs.get("ax", None)
+        add_colorbar = kwargs.get("add_colorbar", True)
+        minn, maxx = kwargs.get("minn", None), kwargs.get("maxx", None)
 
         # Check if the dataset doesn't exist in the object
         if not hasattr(self, f"{kwargs.get('ds_type', 'rad')}_ds"):
@@ -1339,262 +1288,96 @@ class tc_track:
                 }
             )
 
-        fig, ax3d = plt.subplots(
-            figsize=figsize, dpi=dpi, subplot_kw={"projection": "3d"}
-        )
+        if fig is None and ax3d is None:
+            fig, ax3d = plt.subplots(
+                figsize=figsize, dpi=dpi, subplot_kw={"projection": "3d"}
+            )
+        elif (fig is not None) == (ax3d is None):  # xor
+            raise ValueError(
+                "Both fig and ax must be provided if providing the figure or the axes"
+            )
+
         fig.set_facecolor(facecolor)
         ax3d.set_facecolor(facecolor)
         lat_coord, lon_coord, time_coord, level_coord = get_coord_vars(data)
 
-        for timestamp in timestamps:
+        if minn is None and maxx is None:
             minn, maxx = (
                 data.sel({time_coord: timestamp}).min().values,
                 data.sel({time_coord: timestamp}).max().values,
             )
-            if level_coord:
-                for level in data[level_coord].values:
-                    z = int(level)
+        elif (minn is not None) == (maxx is None):  # xor
+            raise ValueError("Both minn and maxx must be provided if one is provided")
 
-                    level_data = data.sel({time_coord: timestamp, level_coord: level})
-                    level_data = level_data.where(~level_data.isnull(), drop=True)
+        if level_coord:
+            for level in data[level_coord].values:
+                z = int(level)
 
-                    norm = mpl.colors.Normalize(vmin=minn, vmax=maxx)
-                    m = plt.cm.ScalarMappable(norm=norm, cmap="seismic")
-                    m.set_array([])
-                    fcolors = m.to_rgba(level_data.values)
+                level_data = data.sel({time_coord: timestamp, level_coord: level})
+                level_data = level_data.where(~level_data.isnull(), drop=True)
 
-                    anomaly = np.abs(level_data.values - level_data.values.mean())
-                    anomaly = (anomaly / anomaly.max()) ** 1.5
+                norm = mpl.colors.Normalize(vmin=minn, vmax=maxx)
+                m = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+                m.set_array([])
+                fcolors = m.to_rgba(level_data.values)
 
-                    fcolors[..., 3] = anomaly
+                anomaly = np.abs(level_data.values - level_data.values.mean())
+                anomaly = (anomaly / anomaly.max()) ** 1.5
 
-                    X, Y = np.meshgrid(
-                        level_data[lon_coord].values, level_data[lat_coord].values[::-1]
-                    )
+                fcolors[..., 3] = anomaly
 
-                    ax3d.plot_surface(
-                        X,
-                        Y,
-                        np.ones(X.shape) * z,
-                        facecolors=fcolors,
-                        vmin=minn,
-                        vmax=maxx,
-                        shade=False,
-                    )
+                X, Y = np.meshgrid(
+                    level_data[lon_coord].values, level_data[lat_coord].values[::-1]
+                )
 
-            ax3d.xaxis.pane.fill = False
-            ax3d.yaxis.pane.fill = False
-            ax3d.zaxis.pane.fill = False
-            ax3d.xaxis.pane.set_edgecolor(facecolor)
-            ax3d.yaxis.pane.set_edgecolor(facecolor)
-            ax3d.zaxis.pane.set_edgecolor(facecolor)
-            ax3d.xaxis.line.set_color("white")
-            ax3d.yaxis.line.set_color("white")
-            ax3d.zaxis.line.set_color("white")
-            ax3d.tick_params(axis="z", colors="white", pad=-1, labelsize=6)
-            ax3d.tick_params(
-                axis="x",
-                colors="white",
-                pad=-5,
-                labelrotation=view_angles[0],
-                labelsize=6,
-            )
-            ax3d.tick_params(
-                axis="y",
-                colors="white",
-                pad=-5,
-                labelrotation=-view_angles[0],
-                labelsize=6,
-            )
-            # ax3d.xaxis._axinfo["tick"]["space_factor"] = 0.2
-            # ax3d.yaxis._axinfo["tick"]["space_factor"] = 0.2
-            ax3d.view_init(*view_angles)
-            ax3d.grid(False)
+                ax3d.plot_surface(
+                    X,
+                    Y,
+                    np.ones(X.shape) * z,
+                    facecolors=fcolors,
+                    vmin=minn,
+                    vmax=maxx,
+                    shade=False,
+                )
+
+        ax3d.xaxis.pane.fill = False
+        ax3d.yaxis.pane.fill = False
+        ax3d.zaxis.pane.fill = False
+        ax3d.xaxis.pane.set_edgecolor(facecolor)
+        ax3d.yaxis.pane.set_edgecolor(facecolor)
+        ax3d.zaxis.pane.set_edgecolor(facecolor)
+        ax3d.xaxis.line.set_color(text_color)
+        ax3d.yaxis.line.set_color(text_color)
+        ax3d.zaxis.line.set_color(text_color)
+        ax3d.tick_params(axis="z", colors=text_color, pad=-1, labelsize=6)
+        ax3d.tick_params(
+            axis="x",
+            colors=text_color,
+            pad=-5,
+            labelrotation=view_angles[0],
+            labelsize=6,
+        )
+        ax3d.tick_params(
+            axis="y",
+            colors=text_color,
+            pad=-5,
+            labelrotation=-view_angles[0],
+            labelsize=6,
+        )
+        ax3d.view_init(*view_angles)
+        ax3d.grid(False)
+        if add_colorbar:
             cbar = fig.colorbar(m, ax=ax3d, orientation="horizontal", pad=0.1)
-            cbar.ax.xaxis.set_tick_params(color="white")
+            cbar.ax.xaxis.set_tick_params(color=text_color)
             cbar.set_label(
-                f"{data.attrs['long_name']}, {data.attrs['units']}", color="white"
+                f"{data.attrs['long_name']}, {data.attrs['units']}", color=text_color
             )
-            plt.setp(plt.getp(cbar.ax.axes, "xticklabels"), color="white", fontsize=6)
-            ax3d.invert_zaxis()
-            fig.tight_layout()
-            plt.show()
-            plt.close()
-
-    # # This will be eliminated later
-    # def add_var_from_dataset(self, data, **kwargs):
-    #     """
-    #     Function to add data from a dataset to the track object.
-
-    #     The function first checks if a dataset does not exist in the
-    #     object, and if it does not, the function checks if a dataset
-    #     exists on disk. If it does, the function loads the dataset and
-    #     then checks to see if the input data variables are already present
-    #     in the dataset. If they are, the function skips the variable.
-    #     If they are not, the variable is added to a list of variables to
-    #     process.
-
-    #     If the dataset exists in the object, the function checks to see
-    #     whether the input data variables are already present in the
-    #     dataset. If they are, the function skips the variable. If they
-    #     are not, the variable is added to a list of variables to process.
-
-    #     If the list of variables to process is not empty, the function
-    #     loops through the list and adds the variables to the dataset.
-    #     The dataset is then stored in the object and saved to disk.
-
-    #     Parameters
-    #     ----------
-    #     data : xr.Dataset, required
-    #         Dataset containing the data to add to the track object
-
-    #     Returns
-    #     -------
-    #     None
-
-    #     """
-
-    #     assert (
-    #         type(data) == xr.Dataset
-    #     ), f"Invalid data type {type(data)}. Expected xarray Dataset"
-
-    #     # Determine if the data to be added is single or multilevel
-    #     level_type = "S" if len(data.dims) == 3 else "M"
-    #     ds_type = kwargs.get("masktype", "rad")
-
-    #     # Check if the dataset doesn't exist in the object
-    #     if not hasattr(self, f"{ds_type}_{level_type}_ds"):
-    #         # Check if the dataset exists on disk
-    #         if os.path.exists(self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc"):
-    #             # If it does, load the dataset
-    #             print("Loading dataset...")
-    #             setattr(
-    #                 self,
-    #                 f"{ds_type}_{level_type}_ds",
-    #                 xr.open_dataset(
-    #                     self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc"
-    #                 ),
-    #             )
-
-    #     # Check if the dataset exists in the object after checking disk
-    #     if hasattr(self, f"{ds_type}_{level_type}_ds"):
-    #         # Check if the data variables are already in the dataset
-    #         for var in data.data_vars:
-    #             if var in self.__getattribute__(f"{ds_type}_{level_type}_ds").data_vars:
-    #                 print(f"Variable {var} already in dataset. Skipping...")
-    #             else:
-    #                 print(f"Adding variable {var} to processing list...")
-    #                 if not hasattr(self, "var_list"):
-    #                     self.var_list = [var]
-    #                 else:
-    #                     self.var_list.append(var)
-    #     else:
-    #         # If the dataset doesn't exist in the object, add all variables
-    #         print("Creating dataset...")
-
-    #         # Sanitize timestamps because ibtracs includes unsual time steps,
-    #         # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
-    #         # 2005-08-29 11:10:00, 2005-08-29 14:45:00
-    #         valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
-    #         data_steps = data.sel(time=valid_steps)
-    #         attrs = data_steps.attrs
-
-    #         # Generate lat and lot vectors
-    #         lat_vector, lon_vector = axis_generator(**kwargs)
-    #         assert (
-    #             lon_vector.shape <= data_steps.lon.shape
-    #         ), f"Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported."
-    #         assert (
-    #             lat_vector.shape <= data_steps.lat.shape
-    #         ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
-
-    #         # Generate empty array to cast data with
-    #         casting_array = xr.DataArray(
-    #             np.NaN,
-    #             dims=["lat", "lon"],
-    #             coords={"lat": lat_vector, "lon": lon_vector},
-    #         )
-    #         regridder = xe.Regridder(
-    #             data_steps,
-    #             casting_array,
-    #             "bilinear",
-    #             # parallel=True,
-    #         )
-    #         data_steps = regridder(data_steps)
-    #         mask = self.get_mask_series(valid_steps, **kwargs)
-
-    #         data_steps = data_steps.where(mask)
-    #         data_steps.attrs = attrs
-
-    #         setattr(self, f"{ds_type}_{level_type}_ds", data_steps)
-
-    #         data_steps.to_netcdf(
-    #             self.filepath + f"{self.uid}.{ds_type}.{level_type}.nc",
-    #             mode="w",
-    #             compute=True,
-    #         )
-
-    #     # If the list of variables to process is not empty, process them
-    #     if hasattr(self, "var_list"):
-    #         # Sanitize timestamps because ibtracs includes unsual time steps,
-    #         # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
-    #         # 2005-08-29 11:10:00, 2005-08-29 14:45:00
-    #         valid_steps = self.timestamps[np.isin(self.timestamps, data.time.values)]
-    #         data_steps = data.sel(time=valid_steps)
-
-    #         # Generate lat and lot vectors
-    #         lat_vector, lon_vector = axis_generator(**kwargs)
-
-    #         # Generate mask
-    #         mask = self.get_mask_series(valid_steps, **kwargs)
-    #         assert (
-    #             lon_vector.shape <= data_steps.lon.shape
-    #         ), f"Longitude vector is too long. Expected <={data_steps.lon.shape} but got {lon_vector.shape}. Downscaling not yet supported."
-    #         assert (
-    #             lat_vector.shape <= data_steps.lat.shape
-    #         ), f"Latitude vector is too long. Expected <={data_steps.lat.shape} but got {lat_vector.shape}. Downscaling not yet supported."
-
-    #         for var in self.var_list:
-    #             print(f"Adding {var} to dataset...")
-    #             var_steps = data_steps[var]
-    #             # Generate empty array to cast data with
-    #             casting_array = xr.DataArray(
-    #                 np.NaN,
-    #                 dims=["lat", "lon"],
-    #                 coords={"lat": lat_vector, "lon": lon_vector},
-    #             )
-    #             regridder = xe.Regridder(
-    #                 var_steps,
-    #                 casting_array,
-    #                 "bilinear",
-    #                 parallel=True,
-    #             )
-    #             var_steps = regridder(var_steps)
-    #             var_steps = var_steps.where(mask)
-
-    #             # Add the variable to the dataset
-    #             self.__getattribute__(f"{ds_type}_{level_type}_ds")[var] = var_steps
-
-    #         self.__getattribute__(f"{ds_type}_{level_type}_ds").to_netcdf(
-    #             self.filepath + f"{self.uid}.{ds_type}.{level_type}.appended.nc",
-    #             mode="w",
-    #             compute=True,
-    #         )
-
-    #         # Workaround to rewrite file with appended file
-    #         self.__getattribute__(f"{ds_type}_{level_type}_ds").close()
-    #         # Overwrite the original file with the appended file
-    #         subprocess.run(
-    #             [
-    #                 "mv",
-    #                 "-f",
-    #                 f"{self.filepath}{self.uid}.{ds_type}.{level_type}.appended.nc",
-    #                 f"{self.filepath}{self.uid}.{ds_type}.{level_type}.nc",
-    #             ]
-    #         )
-
-    #         # remove the var_list attribute
-    #         delattr(self, "var_list")
+            plt.setp(
+                plt.getp(cbar.ax.axes, "xticklabels"), color=text_color, fontsize=6
+            )
+        ax3d.invert_zaxis()
+        fig.tight_layout()
+        plt.show()
 
 
 # %%

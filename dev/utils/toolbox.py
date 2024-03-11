@@ -32,8 +32,10 @@ from matplotlib.collections import PolyCollection
 from mpl_toolkits.mplot3d.axes3d import Axes3D
 import matplotlib as mpl
 from matplotlib.animation import FuncAnimation
-
-
+import dask
+import resource
+import time
+import glob
 # TCBench Libraries
 try:
     from utils import constants, data_lib
@@ -43,8 +45,7 @@ except:
 # Retrieve Repository Path
 repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
 
-print(repo_path)
-
+print(f"Loading from {repo_path}")
 
 # %% Auxilliary Functions
 def axis_generator(**kwargs):
@@ -516,6 +517,7 @@ class tc_track:
             # Check to see if file exists for UID, if not, create it
             self.filepath = kwargs.get("filepath", repo_path + "/data/")
 
+
             if not os.path.exists(self.filepath):
                 print("Filepath for processed data does not exist. Creating...")
                 os.makedirs(self.filepath)
@@ -603,7 +605,7 @@ class tc_track:
 
         return output
 
-    def get_mask(self, timestamp, **kwargs):
+    def get_mask(self, point, **kwargs):
         # read in parameters if submitted, otherwise use defaults
         masktype = kwargs.get("masktype", "rad")
 
@@ -615,8 +617,6 @@ class tc_track:
             raise ValueError(f"Unsupported mask type {masktype}")
 
         mask = None
-
-        point = self.track[self.timestamps == timestamp][0]
 
         # Get the mask and flip the y axis to match the data
         temp_mask = mask_getter(point, **kwargs)[:, ::-1, :]
@@ -703,6 +703,7 @@ class tc_track:
                     len(var_meta[year]) == var_meta[year].sum()
                 ), f"Missing variable data for {year}"
 
+            count = 0
             for var in var_list:
 
                 ##TODO: check if file exsits and if it does, check if the variable is already in the file
@@ -724,131 +725,63 @@ class tc_track:
                 # Sanitize timestamps because ibtracs includes unsual time steps
                 valid_steps = sanitize_timestamps(self.timestamps, var_data)
 
-                print(f"Processing time steps in parallel...")
-                # Loop through each time step in parallel
-                jl.Parallel(n_jobs=-1, verbose=2)(
-                    jl.delayed(self.process_timestep)(
-                        var_data.sel(time=t).copy(),
-                        **{
-                            "lat_coord": lat_coord,
-                            "lon_coord": lon_coord,
-                            "time_coord": time_coord,
-                            "level_coord": level_coord,
-                        },
-                        timestamp=t,
-                        **kwargs,
-                    )
-                    for t in valid_steps
+                print(f"Processing time steps in parallel for {var} ({count}/{len(var_list)})")
+                count +=1
+                print(f"Processing data of size: {var_data.nbytes/(2**20):.2f}MB")
+                ds_clean = var_data.sel(time=sanitize_timestamps(valid_steps, var_data)).chunk(chunks={"time": 1})
+                if ds_clean.sizes['time'] < 1:
+                    print(f"Clean data set dimensios: {ds_clean.sizes}")
+                    print("Data set does not contain timesteps asked, skipping ...")
+                    var_data.close()
+                    ds_clean.close()
+                    continue
+
+                kwargs.update(
+                    {
+                    "lat_coord": lat_coord,
+                    "lon_coord": lon_coord,
+                    "time_coord": time_coord,
+                    "level_coord": level_coord,
+                    }
                 )
+                output = ds_clean.map_blocks(self.process_timestep,
+                                             kwargs=kwargs,
+                                             template=ds_clean).compute()
+                # Save the final dataset to disk
+                output = output.where(~output.isnull().compute(), drop=True)
 
-                # Garbage collect to free up memory
-                gc.collect()
+                encoding = {}
+                for v in output.data_vars:
+                    print(f"----> output encoding: {output[v].encoding}")
+                    encoding[v] = {
+                        "original_shape": output[v].shape,
+                        "_FillValue": output[v].encoding.get(
+                            "_FillValue", -32767
+                        ),
+                        "dtype": kwargs.get("dtype", np.int16),
+                        "add_offset": output[v].mean().compute().values,
+                        "scale_factor": output[v].std().compute().values
+                                        / kwargs.get("scale_divisor", 2000),
+                    }
+                output_file = self.filepath + f"{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc"
+                temp_output_file = self.filepath + f"{var}_{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc"
+                print(f"Writing file to {temp_output_file}")
+                print(f"out data size: {output.nbytes / (2 ** 20):.2f}MB")
+                output.to_netcdf(temp_output_file, encoding = encoding)
+                var_data.close()
+                ds_clean.close()
+                output.close()
+                print(f"Process memory: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2 ** 10)} MB")
 
-                # Read in the temporary files and merge them into the final file
-                file_list = os.listdir(self.filepath)
+        file_list = glob.glob(os.path.join(self.filepath, "*.rect.appended.nc"))
+        temps_ds = xr.open_mfdataset(
+            file_list,
+             combine="by_coords",
+             parallel=True,
+        )
+        print(f"Writing final file: {output_file}")
+        temps_ds.to_netcdf(output_file)
 
-                datavar = list(var_data.data_vars)[0]
-
-                # Filter out files that do not include the temp preix, variable name, and UID
-                for file in file_list.copy():
-                    if "." + datavar + "." not in file:
-                        file_list.remove(file)
-                        print(
-                            f"Removing {file} from file list because it doesn't include {datavar}"
-                        )
-                    elif "temp" not in file:
-                        file_list.remove(file)
-                        print(
-                            f"Removing {file} from file list because it doesn't include temp"
-                        )
-                    elif self.uid not in file:
-                        file_list.remove(file)
-                        print(
-                            f"Removing {file} from file list because it doesn't include {self.uid}"
-                        )
-
-                print("after removal: ", file_list)
-
-                # If temporary files are present, merge them into the final file
-                if len(file_list) > 0:
-                    # Load the temporary files into an xarray dataset
-                    temp_ds = xr.open_mfdataset(
-                        [self.filepath + file for file in file_list],
-                        concat_dim=time_coord,
-                        combine="nested",
-                        parallel=True,
-                    )
-
-                    # Select the non-null data from the temporary dataset
-                    temp_ds = temp_ds.where(~temp_ds.isnull().compute(), drop=True)
-
-                    # calculate the encoding for the final dataset
-                    encoding = {}
-                    for data_var in temp_ds.data_vars:
-                        encoding[data_var] = {
-                            "original_shape": temp_ds[data_var].shape,
-                            "_FillValue": temp_ds[data_var].encoding.get(
-                                "_FillValue", -32767
-                            ),
-                            "dtype": kwargs.get("dtype", np.int16),
-                            "add_offset": temp_ds[data_var].mean().compute().values,
-                            "scale_factor": temp_ds[data_var].std().compute().values
-                            / kwargs.get("scale_divisor", 2000),
-                        }
-
-                    # if the UID dataset exists, merge the new data into it
-                    if os.path.exists(
-                        self.filepath + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
-                    ):
-                        print(f"Merging {var} into {self.uid}...")
-                        # Load the UID dataset
-                        final_ds = xr.open_dataset(
-                            self.filepath
-                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
-                        )
-
-                        # Merge the new data into the final dataset
-                        final_ds = xr.merge([final_ds, temp_ds])
-
-                        # Save the final dataset to disk
-                        final_ds.to_netcdf(
-                            self.filepath
-                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
-                            mode="w",
-                            compute=True,
-                            encoding=encoding,
-                        )
-
-                        # Workaround to rewrite file with appended file
-                        # Overwrite the original file with the appended file
-                        subprocess.run(
-                            [
-                                "mv",
-                                "-f",
-                                f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
-                                f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
-                            ]
-                        )
-                    else:
-                        # Save the final dataset to disk
-                        temp_ds.to_netcdf(
-                            self.filepath
-                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
-                            mode="w",
-                            compute=True,
-                            encoding=encoding,
-                        )
-
-                    # Close the temporary dataset
-                    temp_ds.close()
-                    del temp_ds
-
-                    # delete the temporary files
-                    for file in file_list:
-                        os.remove(self.filepath + file)
-
-                    # Garbage collect to free up memory
-                    gc.collect()
 
     def process_timestep(self, data, **kwargs):
         """
@@ -904,85 +837,23 @@ class tc_track:
         else:
             num_levels = 1
 
-        # Get the timestamp from the kwargs
-        timestamp = kwargs.get("timestamp", None)
-        assert timestamp is not None, "Fatal error: timestamp not found in kwargs"
-
         var_list = None
 
-        # Check if the dataset doesn't exist in the object
-        if not hasattr(self, f"{ds_type}_ds"):
-            # Check if the dataset exists on disk
-            if os.path.exists(self.filepath + f"{self.uid}.{ds_type}.nc"):
-                # If it does, load the dataset
-                print("Loading dataset...")
-                setattr(
-                    self,
-                    f"{ds_type}_ds",
-                    xr.open_dataset(self.filepath + f"{self.uid}.{ds_type}.nc"),
-                )
-
-        # Check if the dataset exists in the object after checking disk
-        if hasattr(self, f"{ds_type}_ds"):
-            # Check if the data variables are already in the dataset
-            for var in data.data_vars:
-                if var in self.__getattribute__(f"{ds_type}_ds").data_vars:
-                    print(f"Variable {var} already in dataset. Skipping...")
-                else:
-                    # print(f"Adding variable {var} to processing list...")
-                    if not var_list:
-                        var_list = [var]
-                    else:
-                        var_list.append(var)
-        elif var_list is None:  # add all the datavars to the list
-            var_list = list(data.data_vars)
+        [var_list] = list(data.data_vars)
 
         if var_list is not None:
-            data = data[var_list]
-
-            attrs = data.attrs
-
             # Retrieve regridder if necessary
-            regridder = get_regrider(dataset=data, **kwargs)
+            regridder = get_regrider(dataset=data[var_list], **kwargs)
 
             if regridder is not None:
                 data = regridder(data)
 
-            level_coord = kwargs.get("level_coord", None)
-            if level_coord:
-                num_levels = data[level_coord].shape[0]
+            [point] = self.track[self.timestamps == data.time.data]
+            mask = self.get_mask(point, num_levels=num_levels, **kwargs)
+            data[var_list].data = data[var_list].where(mask).data
 
-            mask = self.get_mask(num_levels=num_levels, **kwargs)
-            # mask = self.get_mask_series(valid_steps, **kwargs)
+        return data
 
-            data = data.where(mask)
-            data.attrs = attrs
-
-            setattr(self, f"{ds_type}_ds", data)
-
-            encoding = {}
-            for data_var in data.data_vars:
-                encoding[data_var] = {
-                    "original_shape": data[data_var].shape,
-                    "_FillValue": data[data_var].encoding.get("_FillValue", -32767),
-                    "dtype": kwargs.get("dtype", np.int16),
-                    "add_offset": data[data_var].mean().compute().values,
-                    "scale_factor": data[data_var].std().compute().values
-                    / kwargs.get("scale_divisor", 2000),
-                }
-
-            data.to_netcdf(
-                self.filepath
-                + f"temp_{np.where(self.timestamps == timestamp)[0][0]}.{data_var}.{self.uid}.{ds_type}.nc",
-                mode="w",
-                compute=True,
-                encoding=encoding,
-            )
-
-            data.close()
-            del data
-            delattr(self, f"{ds_type}_ds")
-            gc.collect()
 
     # Function to load the data from storage
     def load_data(self, **kwargs):

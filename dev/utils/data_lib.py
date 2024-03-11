@@ -275,10 +275,12 @@ class Data_Collection:
                     ]
 
         # Load the dataset
-        ds = kwargs.get("data_loader", xr.open_mfdataset)(
-            file_list,
-            **kwargs.get("data_loader_kwargs", {"parallel": True}),
-        )
+        print(f"Opening file list: {file_list}")
+        ds = xr.open_dataset(file_list[0])
+        # ds = kwargs.get("data_loader", xr.open_mfdataset)(
+        #     file_list,
+        #     #**kwargs.get("data_loader_kwargs", {"parallel": True}),
+        # )
 
         return ds, data_var_dict
 

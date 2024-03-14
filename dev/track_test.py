@@ -150,7 +150,7 @@ from utils import data_lib as dlib
 # %%
 if __name__ == "__main__":
     print(f"Initializing dask cluster")
-    client = Client(n_workers=10, threads_per_worker=1, memory_limit='90GB')
+    client = Client(n_workers=20, threads_per_worker=1, memory_limit='90GB', processes=True)
 
     print(f"Reading dataset")
     full_data = toolbox.read_hist_track_file(

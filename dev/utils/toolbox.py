@@ -636,7 +636,7 @@ class tc_track:
 
         return mask
 
-    def get_mask_series(self, timesteps, **kwargs):
+    def get_mask_points(self, points, **kwargs):
         # read in parameters if submitted, otherwise use defaults
         masktype = kwargs.get("masktype", "rad")
 
@@ -650,12 +650,10 @@ class tc_track:
         num_levels = kwargs.get("num_levels", 1)
 
         mask = None
-
-        for stamp in timesteps:
-            point = self.track[0][self.timestamps == stamp][0]
+        print(num_levels)
+        for point in points:
 
             temp_mask = get_mask(point, **kwargs)
-            print(num_levels)
 
             if num_levels > 1:
                 temp_mask = np.tile(temp_mask, (num_levels, 1, 1))[np.newaxis, :, :, :]
@@ -848,8 +846,8 @@ class tc_track:
             if regridder is not None:
                 data = regridder(data)
 
-            [point] = self.track[self.timestamps == data.time.data]
-            mask = self.get_mask(point, num_levels=num_levels, **kwargs)
+            points = self.track[np.isin(self.timestamps, data.time.data)]
+            mask = self.get_mask_points(points, num_levels=num_levels, **kwargs)
             data[var_list].data = data[var_list].where(mask).data
 
         return data

@@ -2,4 +2,6 @@
 *.ruff_cache/*
 *data/*
 *.nc
+*__pycache__*
+*.pyc
 environment.yml

@@ -27,21 +27,22 @@ full_data = toolbox.read_hist_track_file(
 )
 # %%
 data_2005 = full_data[full_data.ISO_TIME.dt.year == 2005]
-katrina = data_2005[data_2005.NAME == "KATRINA"]
+storm = data_2005[data_2005.NAME == "EMILY"]
 
 # %%
 track = toolbox.tc_track(
-    UID=katrina.SID.iloc[0],
-    NAME=katrina.NAME.iloc[0],
-    track=katrina[["LAT", "LON"]].to_numpy(),
-    timestamps=katrina.ISO_TIME.to_numpy(),
-    ALT_ID=katrina[constants.ibtracs_cols._track_cols__metadata.get("ALT_ID")].iloc[0],
+    UID=storm.SID.iloc[0],
+    NAME=storm.NAME.iloc[0],
+    track=storm[["LAT", "LON"]].to_numpy(),
+    timestamps=storm.ISO_TIME.to_numpy(),
+    ALT_ID=storm[constants.ibtracs_cols._track_cols__metadata.get("ALT_ID")].iloc[0],
 )
 # %%
 data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
-# data_path = data_dir + "legacy_files/gpot/gpot_2005.nc"
+save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
 
 dc = dlib.Data_Collection(data_dir)
+
 # %%
 # track.process_data_collection(
 #     dc,
@@ -67,11 +68,33 @@ dc = dlib.Data_Collection(data_dir)
 # %%
 
 track.load_data(ds_type="rect")
+
+# %%
+wind_speed = (track.rect_ds.u**2 + track.rect_ds.v**2) ** 0.5
+wind_speed.attrs["units"] = "m/s"
+wind_speed.attrs["long_name"] = "Wind Speed"
+track.rect_ds["wind_speed"] = wind_speed
+
 # %%
 track.animate_data(
     "vo",
     ds_type="rect",
-    cmap="seismic",
+    cmap="cividis",
+    ignore_levels=[
+        150,
+        70,
+        50,
+        30,
+        20,
+        10,
+    ],
+)
+# %%
+track.plot3D(
+    var="vo",
+    timestamp=track.timestamps[30],
+    ds_type="rect",
+    alpha=0.25,
     ignore_levels=[
         # 1000,
         # 925,
@@ -89,35 +112,12 @@ track.animate_data(
         20,
         10,
     ],
+    figsize=(4, 6),
+    cmap="seismic",
+    # facecolor="white",
+    # text_color="black",
 )
-# track.plot3D(
-#     var="d",
-#     timestamps=[track.timestamps[30]],
-#     ds_type="rect",
-#     alpha=0.25,
-#     ignore_levels=[
-#         # 1000,
-#         # 925,
-#         # 850,
-#         # 700,
-#         # 600,
-#         # 500,
-#         # 400,
-#         # 300,
-#         # 200,
-#         150,
-#         70,
-#         50,
-#         30,
-#         20,
-#         10,
-#     ],
-#     figsize=(4, 6),
-#     cmap="seismic",
-#     # facecolor="white",
-#     # text_color="black",
-# )
-# # %%
+# %%
 # track.rect_ds.isel(time=30).where(
 #     ~track.rect_ds.isel(time=30).isnull(), drop=True
 # ).msl.plot.imshow(cmap="winter_r")

@@ -36,6 +36,7 @@ import dask
 import resource
 import time
 import glob
+import tempfile
 # TCBench Libraries
 try:
     from utils import constants, data_lib
@@ -676,6 +677,7 @@ class tc_track:
         years = sorted(list(set(self.timestamps.astype("datetime64[Y]").astype(str))))
         years = [int(year) for year in years]
 
+        temp_dir = tempfile.mkdtemp()
         for var_type in data_collection.meta_dfs:
             # Skip the var type if it's empty
             if len(data_collection.meta_dfs[var_type].columns) == 0:
@@ -724,11 +726,11 @@ class tc_track:
                 valid_steps = sanitize_timestamps(self.timestamps, var_data)
 
                 print(f"Processing time steps in parallel for {var} ({count}/{len(var_list)})")
-                count +=1
+                count += 1
                 print(f"Processing data of size: {var_data.nbytes/(2**20):.2f}MB")
                 ds_clean = var_data.sel(time=sanitize_timestamps(valid_steps, var_data)).chunk(chunks={"time": 1})
                 if ds_clean.sizes['time'] < 1:
-                    print(f"Clean data set dimensios: {ds_clean.sizes}")
+                    print(f"Clean data set dimensions: {ds_clean.sizes}")
                     print("Data set does not contain timesteps asked, skipping ...")
                     var_data.close()
                     ds_clean.close()
@@ -761,17 +763,18 @@ class tc_track:
                         "scale_factor": output[v].std().compute().values
                                         / kwargs.get("scale_divisor", 2000),
                     }
-                output_file = self.filepath + f"{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc"
-                temp_output_file = self.filepath + f"{var}_{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc"
+
+                temp_output_file = os.path.join(temp_dir, f"{var}_{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc")
                 print(f"Writing file to {temp_output_file}")
                 print(f"out data size: {output.nbytes / (2 ** 20):.2f}MB")
-                output.to_netcdf(temp_output_file, encoding = encoding)
+                output.to_netcdf(temp_output_file, encoding=encoding)
                 var_data.close()
                 ds_clean.close()
                 output.close()
                 print(f"Process memory: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2 ** 10)} MB")
 
-        file_list = glob.glob(os.path.join(self.filepath, "*.rect.appended.nc"))
+        output_file = os.path.join(self.filepath, f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc")
+        file_list = glob.glob(os.path.join(temp_dir, "*.rect.appended.nc"))
         temps_ds = xr.open_mfdataset(
             file_list,
              combine="by_coords",

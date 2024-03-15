@@ -213,146 +213,297 @@ valid_coords = {
 }
 
 
-# %% PRIMED Metadata
-# Questions for developers:
-# Why are the files organized by these basins but the metadata includes
-# basins? Why are the basins not the same?
-primed_basins = set(
-    [
-        "AL",  # North Atlantic
-        "CP",  # Central Pacific
-        "EP",  # Eastern North Pacific
-        "IO",  # Indian Ocean
-        "SH",  # Southern Hemisphere
-        "WP",  # Western North Pacific
-    ]
-)
-
-# Primed storm names are stored in a nested dictionary, the first key dedicated
-# to the year and the second key dedicated to the storm ID. Note that this has
-# currently only been applied to the North Atlantic basin. For storms without a name,
-# the dictionary return by the year should be called using the .get() method.
-# e.g., psn[study_year].get(STORM_ID, 'Unnamed')
-# Primed Storm Names abbreviated to psn
-# UPDATE: - No longer using this dictionary. Primed uses the ATCF ID as the
-#           storm ID, so we can use the ATCF ID to get the storm name.
-psn = {
-    2000: {
-        3: "Alberto",
-        10: "Florence",
-        11: "Gordon",
-        12: "Helene",
-        13: "Isaac",
-        14: "Joyce",
-        15: "Keith",
-        16: "Leslie",
+# %% SHIPS Metadata
+SHIPS_metadata = {
+    "VMAX": {"long_name": "Maximum Surface Wind", "units": "kt"},
+    "MSLP": {"long_name": "Minimum Sea Level Pressure", "units": "hPa"},
+    "TYPE": {
+        "long_name": "Storm type",
+        "units": "None",
+        "Notes": "0=wave, remnant low, dissipating low, 1=tropical, 2=subtropical, 3=extra-tropical. \n Note that the SHIPS variables are set to missing for all cases except type=1 or 2,\nsince these are not included in the SHIPS developmental sample for estimating the model coefficients.",
     },
-    2001: {
-        1: "Allison",
-        3: "Barry",
-        4: "Chantal",
-        5: "Dean",
-        6: "Erin",
-        7: "Felix",
-        8: "Gabrielle",
-        10: "Humberto",
-        11: "Iris",
-        15: "Michelle",
-        17: "Olga",
+    "HIST": {
+        "long_name": "Storm history",
+        "units": "6hr periods",
+        "Notes": "The no. of 6 hour periods the storm max wind has been above 20, 25, ,…, 120 kt.",
+        "LeadTimeVar": False,
     },
-    2002: {4: "Dolly", 8: "Gustav", 10: "Isidore", 12: "Kyle", 13: "Lili"},
-    2003: {
-        1: "Ana",
-        4: "Claudette",
-        5: "Danny",
-        10: "Fabian",
-        13: "Isabel",
-        16: "Kate",
-        17: "Larry",
-        19: "Nicholas",
+    "DELV": {
+        "long_name": "Intensity change (see notes)",
+        "units": "kt",
+        "Notes": "-12 to 0, -6 to 0, 0 to 0, 0 to 6, ... 0 to 120 hr. If the storm crosses a major land mass during the time interval, value set to NaN (9999 in original dataset)",
+        "LeadTimeVar": False,
     },
-    2004: {
-        1: "Ana",
-        2: "Bonnie",
-        3: "Charley",
-        4: "Danielle",
-        6: "Frances",
-        7: "Gaston",
-        9: "Ivan",
-        11: "Jeanne",
-        12: "Karl",
-        13: "Lisa",
-        16: "Otto",
+    "INCV": {
+        "long_name": "Intensity change (see notes)",
+        "units": "kt",
+        "Notes": "-18 to -12, -12 to -6, ... 114 to 120 hr. Set to 9999 similar to DELV for land cases.",
+        "LeadTimeVar": False,
     },
-    2005: {
-        1: "Arlene",
-        3: "Cindy",
-        4: "Dennis",
-        5: "Emily",
-        6: "Franklin",
-        8: "Harvey",
-        9: "Irene",
-        12: "Katrina",
-        13: "Lee",
-        14: "Maria",
-        15: "Nate",
-        16: "Ophelia",
-        17: "Philippe",
-        18: "Rita",
-        25: "Wilma",
-        28: "Gamma",
-        29: "Delta",
-        30: "Epsilon",
-        31: "Zeta",
+    "LAT": {"long_name": "Storm latitude", "units": "deg N *10", "Notes": "vs time"},
+    "LON": {"long_name": "Storm longitude", "units": "deg W *10", "Notes": "vs time"},
+    "CSST": {
+        "long_name": "Climatological SST",
+        "units": "deg C * 10",
+        "Notes": "vs time",
     },
-    2006: {
-        1: "Alberto",
-        5: "Debby",
-        6: "Ernesto",
-        7: "Florence",
-        8: "Gordon",
-        9: "Helene",
+    "CD20": {
+        "long_name": "Climatological depth of 20 deg C isotherm",
+        "units": "m",
+        "Notes": "from 2005-2010 NCODA analyses",
     },
-    2007: {
-        1: "Andrea",
-        4: "Dean",
-        6: "Felix",
-        8: "Ingrid",
-        11: "Jerry",
-        12: "Karen",
-        14: "Melissa",
-        16: "Noel",
-        17: "Olga",
+    "CD26": {
+        "long_name": "Climatological depth of 26 deg C isotherm",
+        "units": "m",
+        "Notes": "from 2005-2010 NCODA analyses",
     },
-    2008: {
-        # 1: "Arthur",
-        2: "Bertha",
-        # 3: "Cristobal",
-        4: "Dolly",
-        # 5: "Edouard",
-        6: "Fay",
-        7: "Gustav",
-        8: "Hanna",
-        9: "Ike",
-        10: "Josephine",
-        # 11: "Kyle",
-        12: "Laura",
-        # 13: "Marco",
-        # 14: "Nana",
-        15: "Omar",
-        17: "Paloma",
+    "COHC": {
+        "long_name": "Climatological ocean heat content",
+        "units": "kJ/cm2",
+        "Notes": "from 2005-2010 NCODA analyses",
     },
-    2009: {
-        2: "Ana",
-        3: "Bill",
-        # 4:'Claudette',
-        # 5:'Danny',
-        # 6:'Erika',
-        7: "Fred",
-        9: "Grace",
-        # 10:'Henri',
-        11: "Ida",
+    "DTL": {
+        "long_name": "Distance to nearest major land mass",
+        "units": "km",
+        "Notes": "vs time",
     },
+    "OAGE": {
+        "long_name": "Ocean Age",
+        "units": "hr*10",
+        "Notes": "The amount of time the area within 100 km of the storm center has been occupied by the storm along its track up to this point in time",
+    },
+    "NAGE": {
+        "long_name": "Normalized Ocean Age",
+        "units": "hr*10",
+        "Notes": "Same as OAGE, but normalized by the maximum wind/100kt. If the max wind was a constant 100 kt over its past history, NAGE=OAGE.",
+    },
+    "RSST": {
+        "long_name": "Reynolds Sea Surface Temperature",
+        "units": "deg C*10",
+        "Notes": "vs time",
+        "Info_Label": "Age, in days, of the SST analysis used to estimate RSST",
+    },
+    "DSST": {
+        "long_name": "Daily Reynolds Sea Surface Temperature",
+        "units": "deg C*10",
+        "Notes": "vs time",
+        "Info_Label": "Age, in days, of the SST analysis used to estimate RSST",
+    },
+    "DSTA": {
+        "long_name": "Spatially Averaged Daily Reynolds Sea Surface Temperature",
+        "units": "deg C*10",
+        "Notes": "vs time. spatially averaged over 5 points (storm center, + 50 km N, E, S and W of center)",
+        "Info_Label": "Age, in days, of the SST analysis used to estimate RSST",
+    },
+    "PHCN": {
+        "long_name": "Estimated ocean heat content",
+        "units": "kJ/cm2",
+        "Notes": "From climo OHC and current SST anomaly. Designed to fill in for RHCN when that is missing.",
+    },
+    "U200": {"long_name": "200 hPa zonal wind, r=200-800 km", "units": "kt *10"},
+    "U20C": {"long_name": "200 hPa zonal wind, r=0-500 km", "units": "kt *10"},
+    "V20C": {"long_name": "200 hPa meridional wind, r=0-500 km", "units": "kt *10"},
+    "E000": {
+        "long_name": "1000 hPa Potential Temperature (Theta_e)",
+        "units": "Unit",
+        "Notes": "",
+    },
+    "EPOS": {
+        "long_name": "Surface - Environment Potential Temperature (theta_e) difference, r = 200-800",
+        "units": "deg K*10",
+        "Notes": "The average theta e difference between a parcel lifted from the surface and its environment \n(200-800 km average) vs time. Only positive differences are included in the average.",
+    },
+    "ENEG": {
+        "long_name": "Negative Surface - Environment Potential Temperature (theta_e) difference, r = 200-800",
+        "units": "Unit",
+        "Notes": "The average theta e difference between a parcel lifted from the surface and its environment \n(200-800 km average) vs time. Only negative differences are included in the average.\nMinus sign not included.",
+    },
+    "EPSS": {
+        "long_name": "Negative Surface - Saturated-Environment Potential Temperature (theta_e) difference, r = 200-800",
+        "units": "Unit",
+        "Notes": "The average theta_e difference between a parcel lifted from the surface and the saturated theta_e \nof its environment (200-800 km average) vs time. Only positive differences are included in the average.",
+    },
+    "ENSS": {
+        "long_name": "Negative Surface - Saturated-Environment Potential Temperature (theta_e) difference, r = 200-800",
+        "units": "Unit",
+        "Notes": "The average theta_e difference between a parcel lifted from the surface and the saturated theta_e \nof its environment (200-800 km average) vs time. Only negative differences are included in the average.\nMinus sign not included.",
+    },
+    "RHLO": {
+        "long_name": "850-700 hPa relative humidity, r=200-800 km",
+        "units": "%",
+        "Notes": "vs time",
+    },
+    "RHMD": {
+        "long_name": "700-500 hPa relative humidity, r=200-800 km",
+        "units": "%",
+        "Notes": "vs time",
+    },
+    "RHHI": {
+        "long_name": "500-300 hPa relative humidity, r=200-800 km",
+        "units": "%",
+        "Notes": "vs time",
+    },
+    "PSLV": {
+        "long_name": "Pressure, Storm Center Motion, Deep Layer Wind, and Weights",
+        "units": "hPa",
+        "Notes": """
+        First Column: Pressure of the center of mass of the layer where storm motion best matches environmental flow (hPa) (t=0 only)
+        Second Column: The observed zonal storm motion component (m/s *10)
+        Third Column: The observed meridional storm motion component (m/s *10)
+        Fourth Column: The observed zonal storm motion component (m/s *10) for the 1000 to 100 hPa mass weighted deep layer environmental wind
+        Fifth Column: The observed meridional storm motion component (m/s *10) for the 1000 to 100 hPa mass weighted deep layer environmental wind
+        Sixth Column: The observed zonal storm motion component (m/s *10) for the optimally weighted deep layer mean flow
+        Seventh Column: The observed meridional storm motion component (m/s *10) for the optimally weighted deep layer mean flow
+        Eighth Column: The parameter alpha that controls the constraint on the weights from being not too “far” from the deep layer mean weights (non-dimensional, *100)
+        Ninth Column: The optimal vertical weights for p=100 hPa. (non-dimensional *1000)
+        Tenth Column: The optimal vertical weights for p=150 hPa. (non-dimensional *1000)
+        Eleventh Column: The optimal vertical weights for p=200 hPa. (non-dimensional *1000)
+        Twelfth Column: The optimal vertical weights for p=250 hPa. (non-dimensional *1000)
+        Thirteenth Column: The optimal vertical weights for p=300 hPa. (non-dimensional *1000)
+        Fourteenth Column: The optimal vertical weights for p=400 hPa. (non-dimensional *1000)
+        Fifteenth Column: The optimal vertical weights for p=500 hPa. (non-dimensional *1000)
+        Sixteenth Column: The optimal vertical weights for p=700 hPa. (non-dimensional *1000)
+        Seventeenth Column: The optimal vertical weights for p=850 hPa. (non-dimensional *1000)
+        Eighteenth Column: The optimal vertical weights for p=1000 hPa. (non-dimensional *1000)""",
+        "LeadTimeVar": False,
+        "Data_Lengt": "18",
+    },
+    "Z850": {
+        "long_name": "850 hPa vorticity (r=0-1000km)",
+        "units": "sec-1 * 10**7",
+        "Notes": "vs time",
+    },
+    "D200": {
+        "long_name": "200 hPa divergence (r=0-1000km)",
+        "units": "sec-1 * 10**7",
+        "Notes": "vs time",
+    },
+    "VARNAME": {"long_name": "Long_Name", "units": "Unit", "Notes": ""},
+    "VARNAME": {"long_name": "Long_Name", "units": "Unit", "Notes": ""},
+    "VARNAME": {"long_name": "Long_Name", "units": "Unit", "Notes": ""},
+    # REFC: Relative eddy momentum flux convergence (m/sec/day, 100-600 km avg) vs time
+    # PEFC: Planetary eddy momentum flux convergence (m/sec/day, 100-600 km avg) vs time
+    # T000:   1000 hPa temperature (dec C* 10) (200-800 km average)
+    # R000:   1000 hPa relative humidity (200-800 km average)
+    # Z000:   1000 hPa height deviation (m) from the U.S. standard atmosphere
+    # TLAT: Latitude of 850 hPa vortex center in NCEP analysis (deg N*10)
+    # TLON: Longitude of 850 hPa vortex center in NCEP analysis (deg W*10)
+    # TWAC: 0-600 km average symmetric tangential wind at 850 hPa from NCEP analysis
+    #             (m/sec *10)
+    # TWXC: Maximum 850 hPa symmetric tangential wind at 850 hPa from NCEP analysis
+    #     (m/sec *10)
+    # G150:    Temperature perturbation at 150 hPa due to the symmetric vortex calculated from the
+    #             gradient thermal wind. Averaged from r=200 to 800 km centered on input lat/lon (not
+    #             always the model/analysis vortex position). (deg C*10)
+    # G200:    Same as G150 at 200 hPa
+    # G250:    Same as G150 at 250 hPa
+    # V000:    The tangential wind (m/sec *10) azimuthally averaged at r=500 km from (TLAT,TLON)
+    #             If TLAT,TLON are not available, (LAT,LON) are used.
+    # V850:   Same as V000 at 850 hPa
+    # V500:  Same as V000 at 500 hPa
+    # V300:  Same as V000 at 300 hPa
+    # TGRD:  The magnitude of the temperature gradient between 850 and 700 hPa averaged
+    #             from 0 to 500 km estimated from the geostrophic thermal wind (deg C per m*107)
+    # TADV:  The temperature advection between 850 and 700 hPa averaged from 0 to 500 km
+    #             From the geostrophic thermal wind (deg per sec*106)
+    # PENC: Azimuthally averaged surface pressure at outer edge of vortex ( (hPa-1000)*10)
+    # SHDC: Same as SHRD but with vortex removed and averaged from 0-500 km relative
+    #             to 850 hPa vortex center
+    # SDDC: Heading (deg) of above shear vector. Westerly shear has a value of 90 deg.
+    # SHGC: Same as SHRG but with vortex removed and averaged from 0-500 km relative
+    #             to 850 hPa vortex center
+    # DIVC: Same as D200, but centered at 850 hPa vortex location
+    # T150: 200 to 800 km area average 150 hPa temperature (deg C *10) versus time
+    # T200: Same as above for 200 hPa temperature (deg C *10)
+    # T250: Same as above for 250 hPa temperature (deg C *10)
+    # SHRD: 850-200 hPa shear magnitude (kt *10) vs time (200-800 km)
+    # SHTD: Heading (deg) of above shear vector. Westerly shear has a value of 90 deg.
+    # SHRS: 850-500 hPa shear magnitude (kt *10) vs time
+    # SHTS: Heading of above shear vector
+    # SHRG: Generalized 850-200 hPa shear magnitude (kt *10) vs time (takes
+    # into account all levels from 1000 to 100 hPa
+    # PENV:  200 to 800 km average surface pressure ((hPa-1000)*10)
+    # VMPI:  Maximum potential intensity from Kerry Emanuel equation (kt)
+    # VVAV: Average (0 to 15 km) vertical velocity (m/s * 100) of a parcel lifted from the surface
+    #             where entrainment, the ice phase and the condensate weight are accounted for.
+    #             Note: Moisture and temperature biases between the operational and reanalysis files
+    #             make this variable inconsistent in the 2001-2007 sample, compared 2000 and before.
+    # VMFX:  Same as VVAV, but a density weighted vertical average.
+    # VVAC: Same as VVAV but with soundings from 0-500 km with GFS vortex removed
+    # HE07:  Storm motion relative helicity (m^2/s^2)*10 for p=1000 to 700 hPa, r=200 to 800 km
+    # HE05:   Same as HE05, for P=1000 to 500 hPa
+    # O500:   Pressure vertical velocity (hPa/day) at 500 hPa, averaged from r=0 to 1000 km
+    # O700:   Same as O500 at 700 hPa
+    # CFLX: Dry air predictor based on the difference in surface moisture flux between air with the observed (GFS) RH value, and with RH of air mixed from 500 hPa to the surface.
+    # MTPW: Total Precipitable Water (TPW) predictors at t=0 from the GFS analysis. The 21 values
+    #                 in this record are as follows:
+    # 1)	0-200 km average TPW (mm * 10)
+    # 2)	0-200 km TPW standard deviation (mm * 10)
+    # 3)	200-400 km average TPW (mm * 10)
+    # 4)	200-400 km TPW standard deviation (mm * 10)
+    # 5)	400-600 km average TPW (mm * 10)
+    # 6)	400-600 km TPW standard deviation (mm * 10)
+    # 7)	600-800 km average TPW (mm * 10)
+    # 8)	600-800 km TPW standard deviation (mm * 10)
+    # 9)	800-1000 km average TPW (mm * 10)
+    # 10)	800-1000 km TPW standard deviation (mm * 10)
+    # 11)	0-400 km average TPW (mm * 10)
+    # 12)	0-400 km TPW standard deviation (mm * 10)
+    # 13)	0-600 km average TPW (mm * 10)
+    # 14)	0-600 km TPW standard deviation (mm * 10)
+    # 15)	0-800 km average TPW (mm * 10)
+    # 16)	0-800 km TPW standard deviation (mm * 10)
+    # 17)	0-1000 km average TPW (mm * 10)
+    # 18)	0-1000 km TPW standard deviation (mm * 10)
+    # 19)	%TPW less than 45 mm, r=0 to 500 km in 90 deg azimuthal quadrant centered on up-shear direction
+    # 20)	0-500 km averaged TPW (mm * 10) in 90 deg up-shear quadrant
+    # 21)	0-500 km average TPW (mm * 10)
+    # PW01-PW19: Time dependent versions of the 21 TPW variables listed above.
+    # IRXX: Same as IR00 below, but generated from other predictors (not satellite data). These
+    #             should only be used to fill in for missing IR00 if needed.
+    # IR00: Predictors from GOES data (not time dependent). The 20 values in
+    #     this record are as follows:
+    #     1) Time (hhmm) of the GOES image, relative to this case
+    #     2) Average GOES ch 4 brightness temp (deg C *10), r=0-200 km
+    #     3) Stan. Dev. of GOES BT (deg C*10), r=0-200 km
+    #     4) Same as 2) for r=100-300 km
+    #     5) Same as 3) for r=100-300 km
+    #     6) Percent area r=50-200 km of GOES ch 4 BT < -10 C
+    #     7) Same as 6 for BT < -20 C
+    #     8) Same as 6 for BT < -30 C
+    #     9) Same as 6 for BT < -40 C
+    #     10) Same as 6 for BT < -50 C
+    #     11) Same as 6 for BT < -60 C
+    #     12) max BT from 0 to 30 km radius (deg C*10)
+    #     13) avg BT from 0 to 30 km radius (deg C*10)
+    #     14) radius of max BT (km)
+    #     15) min BT from 20 to 120 km radius (deg C*10)
+    #     16) avg BT from 20 to 120 km radius (deg C*10)
+    #     17)  radius of min BT (km)
+    #     18-20) Variables need for storm size estimation
+    # IRM1:  Same as IR00 but at 1.5 hours before initial time
+    # IRM3: Same as IR00 but at three hours before initial time
+    # PC00:   Principal components and related variables from IR imagery at t=0
+    # PCM1:  Same as PC00 but for 1.5 hours before initial time
+    # PCM3: Same as PC00 but for three hours before initial time
+    # RD20: Ocean depth of the 20 deg C isotherm (m), from satellite altimetry data
+    # RD26: Ocean depth of the 26 deg C isotherm (m) from satellite altimetry data
+    # RHCN: Ocean heat content (KJ/cm2) from satellite altimetry data. The number after the
+    #             label is the age in days of the OHC analysis used to estimate RD20, RD26 and RHCN.
+    # NSST: SST from the NCODA analysis (deg C*10)
+    # NTMX: Max ocean temperature in the NCODA vertical profile (deg C*10)
+    # NDMX: Depth of the max ocean temperature in the profile (m)
+    # NDML:  Depth of the mixed layer, defied and the depth where the T is 0.5 colder than
+    #                 at the surface (m). In rare cases, this is the depth where the T is 0.5 warmer than
+    #                 at the surface. In those cases, NDML is negative.
+    # ND30-ND16: Depth of the 30, 28, …, 16 deg C isotherms (m)
+    # NDFR: Depth of the lowest model level in the NCODA analysis (m).
+    # NTFR: Ocean T at the lowest level in the NCODA analysis (deg C*10)
+    # NOHC: Ocean heat content from the NCODA analysis (J/kg-deg C) relative to the 26 C isotherm
+    # NO20: Same as NOHC with respect to the 20 deg C isotherm
+    # XNST-XO20: Climatological values of the NCODA variables above (NSST through NO20).
+    # XDST: Climatological value of the daily Reynolds SST (deg C*10)
+    # LAST: The last line for this case
 }
 
 # %% Metpy units

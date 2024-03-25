@@ -88,15 +88,15 @@ class Data_Collection:
             if not os.path.isdir(os.path.join(var_path, var)):
                 print(f"{var} is not a directory. Skipping.")
                 continue
-
-            file_list = sorted(os.listdir(os.path.join(var_path, var)))
+            folder_path = os.path.join(var_path, var)
+            file_list = sorted(os.listdir(folder_path))
 
             avail_years = []
             # Assert that all files are nc files
             for file in file_list:
                 assert (
                     file.split(".")[-1] == self.file_type
-                ), f"{file} is not a(n) {self.file_type} file"
+                ), f"{file} in {folder_path} is not a(n) {self.file_type} file"
                 avail_years.append(file.split(".")[0].split("_")[1])
             global_year_list += avail_years
             var_dictionary[var] = sorted(avail_years)

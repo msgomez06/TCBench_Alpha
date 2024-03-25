@@ -1,7 +1,10 @@
+# %%
 import os
 import argparse
-import xarray as xr
+
+# import xarray as xr
 import numpy as np
+import pandas as pd
 
 # TCBench Libraries
 try:
@@ -23,6 +26,38 @@ parser.add_argument(
 
 args = parser.parse_args()
 
+# %%
+
+# input_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/SHIPS_dats/5day/lsdiag_na_1982_2019_sat_ts.dat"
+# output_folder = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
+
+
+# Assume we have the following data
+# variables = ["var1", "var2", "var3"]  # variable labels
+# times = [1, 2, 3, 4, 5]  # vector of times
+# var_idxs = [100, 200, 300]  # vertical levels
+# states = np.random.rand(3, 5, 3)  # states at each point in time and level
+
+# # Create an empty DataFrame with a multi-index column
+# df = pd.DataFrame(
+#     columns=pd.MultiIndex.from_product(
+#         [[], times, levels], names=["Variable", "Time", "Level"]
+#     )
+# )
+
+# # For each variable label
+# for variable, state in zip(variables, states):
+#     # Create a new DataFrame with multi-index columns for the variable label, the vector of times, and the levels
+#     temp_df = pd.DataFrame(
+#         state,
+#         columns=pd.MultiIndex.from_product(
+#             [[variable], times, levels], names=["Variable", "Time", "Level"]
+#         ),
+#     )
+#     # Append this new DataFrame to the original DataFrame
+#     df = pd.concat([df, temp_df], axis=1)
+
+# %%
 # Define the input and output paths
 input_path = args.input
 output_folder = args.output_folder
@@ -31,6 +66,7 @@ output_folder = args.output_folder
 with open(input_path, "r") as file:
     data_dict = {}
     ds = None
+    df = None
     for line in file:
         data = line.split()
 
@@ -101,30 +137,64 @@ with open(input_path, "r") as file:
 
         if data[-1] == "LAST":
             # TODO: write the data to the xarray dataset
-            temp_ds = xr.Dataset()
+            input()
+            # Get a list of all of the variables
+            variables = [list(datavar.keys())[0] for datavar in data_dict["datavars"]]
+            # add the non-datavar variables to the list
+            variables.extend(["lat", "lon", "max_wind", "mslp"])
+
+            # Variables can have up to 23 data points
+            levels = np.arange(1, 24)
+
+            # The lead times should be converted to a timedelta
+            leadtimes = tuple(data_dict["lead_time"])
+
+            # Create a timestamp for the row index
             if int(data_dict["year"]) >= 82:
                 year = f'19{data_dict["year"]}'
             else:
                 year = f'20{data_dict["year"]}'
             timestamp = np.datetime64(
                 f'{year}-{data_dict["month"]}-{data_dict["day"]}T{data_dict["hour"]}'
-            ).astype("datetime64[ns]")
+            )
+
+            # if the dataframe is None, create a new dataframe
+            temp_df = pd.DataFrame(
+                index=[timestamp],
+                columns=pd.MultiIndex.from_product(
+                    [variables, leadtimes, levels],
+                    names=["Variable", "Leadtime", "Level"],
+                ),
+                dtype=pd.SparseDtype("int", np.nan),
+            )  # .astype(pd.SparseDtype("int", np.nan))
 
             # Iterate over the data variables
             for var in data_dict["datavars"]:
                 for key in var.keys():
+                    variable = key
                     if var[key]["attrs"].get("LeadTimeVar", True):
-                        coords = {
-                            "t": [timestamp],
-                            "lead_time": data_dict["lead_time"][
-                                -var[key]["data"].size :
-                            ],  # Only take the lead times up to the length of the data
-                        }
+                        temp_levels = (1,)
+                        temp_leadtimes = leadtimes[
+                            -var[key]["data"].size :
+                        ]  # Only take the lead times up to the length of the data
                     else:
-                        coords = {
-                            "t": [timestamp],
-                            "levels": np.arange(1, len(var[key]["data"]) + 1),
-                        }
+                        temp_levels = tuple(np.arange(1, var[key]["data"].size + 1))
+                        temp_leadtimes = (0,)
+
+                    temp_df[variable, temp_leadtimes]
+
+                    # if var[key]["attrs"].get("LeadTimeVar", True):
+                    #     coords = {
+                    #         "t": [timestamp],
+                    #         "lead_time": data_dict["lead_time"][
+                    #             -var[key]["data"].size :
+                    #         ],  # Only take the lead times up to the length of the data
+                    #     }
+                    # else:
+                    #     coords = {
+                    #         "t": [timestamp],
+                    #         "levels": np.arange(1, len(var[key]["data"]) + 1),
+                    #     }
 
                     if "LeadTimeVar" in list(var[key]["attrs"].keys()):
                         var[key]["attrs"].pop("LeadTimeVar")

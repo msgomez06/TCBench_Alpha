@@ -209,7 +209,8 @@ valid_coords = {
     "latitude": ["lat", "Lat"],
     "longitude": ["lon", "Lon"],
     "time": ["time", "Time", "t"],
-    "level": ["Lev", "lev", "pressure", "Pressure"],
+    "level": ["Lev", "lev", "pressure", "Pressure", "isobaric"],
+    "lead_time": ["lead", "Lead", "ldt", "LDT", "valid", "Valid"],
 }
 
 
@@ -345,28 +346,28 @@ SHIPS_metadata = {
     },
     "PSLV": {
         "long_name": "Pressure, Storm Center Motion, Deep Layer Wind, and Weights",
-        "units": "hPa",
-        "Notes": """
-        First Column: Pressure of the center of mass of the layer where storm motion best matches environmental flow (hPa) (t=0 only)
-        Second Column: The observed zonal storm motion component (m/s *10)
-        Third Column: The observed meridional storm motion component (m/s *10)
-        Fourth Column: The observed zonal storm motion component (m/s *10) for the 1000 to 100 hPa mass weighted deep layer environmental wind
-        Fifth Column: The observed meridional storm motion component (m/s *10) for the 1000 to 100 hPa mass weighted deep layer environmental wind
-        Sixth Column: The observed zonal storm motion component (m/s *10) for the optimally weighted deep layer mean flow
-        Seventh Column: The observed meridional storm motion component (m/s *10) for the optimally weighted deep layer mean flow
-        Eighth Column: The parameter alpha that controls the constraint on the weights from being not too “far” from the deep layer mean weights (non-dimensional, *100)
-        Ninth Column: The optimal vertical weights for p=100 hPa. (non-dimensional *1000)
-        Tenth Column: The optimal vertical weights for p=150 hPa. (non-dimensional *1000)
-        Eleventh Column: The optimal vertical weights for p=200 hPa. (non-dimensional *1000)
-        Twelfth Column: The optimal vertical weights for p=250 hPa. (non-dimensional *1000)
-        Thirteenth Column: The optimal vertical weights for p=300 hPa. (non-dimensional *1000)
-        Fourteenth Column: The optimal vertical weights for p=400 hPa. (non-dimensional *1000)
-        Fifteenth Column: The optimal vertical weights for p=500 hPa. (non-dimensional *1000)
-        Sixteenth Column: The optimal vertical weights for p=700 hPa. (non-dimensional *1000)
-        Seventeenth Column: The optimal vertical weights for p=850 hPa. (non-dimensional *1000)
-        Eighteenth Column: The optimal vertical weights for p=1000 hPa. (non-dimensional *1000)""",
+        "units": "See Notes",
+        "Notes": f"""
+                 First Column: Pressure of the center of mass of the layer where storm motion best matches environmental flow (hPa) (t=0 only)
+                 Second Column: The observed zonal storm motion component (m/s *10)
+                 Third Column: The observed meridional storm motion component (m/s *10)
+                 Fourth Column: The observed zonal storm motion component (m/s *10) for the 1000 to 100 hPa mass weighted deep layer environmental wind
+                 Fifth Column: The observed meridional storm motion component (m/s *10) for the 1000 to 100 hPa mass weighted deep layer environmental wind
+                 Sixth Column: The observed zonal storm motion component (m/s *10) for the optimally weighted deep layer mean flow
+                 Seventh Column: The observed meridional storm motion component (m/s *10) for the optimally weighted deep layer mean flow
+                 Eighth Column: The parameter alpha that controls the constraint on the weights from being not too “far” from the deep layer mean weights (non-dimensional, *100)
+                 Ninth Column: The optimal vertical weights for p=100 hPa. (non-dimensional *1000)
+                 Tenth Column: The optimal vertical weights for p=150 hPa. (non-dimensional *1000)
+                 Eleventh Column: The optimal vertical weights for p=200 hPa. (non-dimensional *1000)
+                 Twelfth Column: The optimal vertical weights for p=250 hPa. (non-dimensional *1000)
+                 Thirteenth Column: The optimal vertical weights for p=300 hPa. (non-dimensional *1000)
+                 Fourteenth Column: The optimal vertical weights for p=400 hPa. (non-dimensional *1000)
+                 Fifteenth Column: The optimal vertical weights for p=500 hPa. (non-dimensional *1000)
+                 Sixteenth Column: The optimal vertical weights for p=700 hPa. (non-dimensional *1000)
+                 Seventeenth Column: The optimal vertical weights for p=850 hPa. (non-dimensional *1000)
+                 Eighteenth Column: The optimal vertical weights for p=1000 hPa. (non-dimensional *1000)""",
         "LeadTimeVar": False,
-        "Data_Lengt": "18",
+        "Data_Length": 18,
     },
     "Z850": {
         "long_name": "850 hPa vorticity (r=0-1000km)",
@@ -378,132 +379,655 @@ SHIPS_metadata = {
         "units": "sec-1 * 10**7",
         "Notes": "vs time",
     },
-    "VARNAME": {"long_name": "Long_Name", "units": "Unit", "Notes": ""},
-    "VARNAME": {"long_name": "Long_Name", "units": "Unit", "Notes": ""},
-    "VARNAME": {"long_name": "Long_Name", "units": "Unit", "Notes": ""},
-    # REFC: Relative eddy momentum flux convergence (m/sec/day, 100-600 km avg) vs time
-    # PEFC: Planetary eddy momentum flux convergence (m/sec/day, 100-600 km avg) vs time
-    # T000:   1000 hPa temperature (dec C* 10) (200-800 km average)
-    # R000:   1000 hPa relative humidity (200-800 km average)
-    # Z000:   1000 hPa height deviation (m) from the U.S. standard atmosphere
-    # TLAT: Latitude of 850 hPa vortex center in NCEP analysis (deg N*10)
-    # TLON: Longitude of 850 hPa vortex center in NCEP analysis (deg W*10)
-    # TWAC: 0-600 km average symmetric tangential wind at 850 hPa from NCEP analysis
-    #             (m/sec *10)
-    # TWXC: Maximum 850 hPa symmetric tangential wind at 850 hPa from NCEP analysis
-    #     (m/sec *10)
-    # G150:    Temperature perturbation at 150 hPa due to the symmetric vortex calculated from the
-    #             gradient thermal wind. Averaged from r=200 to 800 km centered on input lat/lon (not
-    #             always the model/analysis vortex position). (deg C*10)
-    # G200:    Same as G150 at 200 hPa
-    # G250:    Same as G150 at 250 hPa
-    # V000:    The tangential wind (m/sec *10) azimuthally averaged at r=500 km from (TLAT,TLON)
-    #             If TLAT,TLON are not available, (LAT,LON) are used.
-    # V850:   Same as V000 at 850 hPa
-    # V500:  Same as V000 at 500 hPa
-    # V300:  Same as V000 at 300 hPa
-    # TGRD:  The magnitude of the temperature gradient between 850 and 700 hPa averaged
-    #             from 0 to 500 km estimated from the geostrophic thermal wind (deg C per m*107)
-    # TADV:  The temperature advection between 850 and 700 hPa averaged from 0 to 500 km
-    #             From the geostrophic thermal wind (deg per sec*106)
-    # PENC: Azimuthally averaged surface pressure at outer edge of vortex ( (hPa-1000)*10)
-    # SHDC: Same as SHRD but with vortex removed and averaged from 0-500 km relative
-    #             to 850 hPa vortex center
-    # SDDC: Heading (deg) of above shear vector. Westerly shear has a value of 90 deg.
-    # SHGC: Same as SHRG but with vortex removed and averaged from 0-500 km relative
-    #             to 850 hPa vortex center
-    # DIVC: Same as D200, but centered at 850 hPa vortex location
-    # T150: 200 to 800 km area average 150 hPa temperature (deg C *10) versus time
-    # T200: Same as above for 200 hPa temperature (deg C *10)
-    # T250: Same as above for 250 hPa temperature (deg C *10)
-    # SHRD: 850-200 hPa shear magnitude (kt *10) vs time (200-800 km)
-    # SHTD: Heading (deg) of above shear vector. Westerly shear has a value of 90 deg.
-    # SHRS: 850-500 hPa shear magnitude (kt *10) vs time
-    # SHTS: Heading of above shear vector
-    # SHRG: Generalized 850-200 hPa shear magnitude (kt *10) vs time (takes
-    # into account all levels from 1000 to 100 hPa
-    # PENV:  200 to 800 km average surface pressure ((hPa-1000)*10)
-    # VMPI:  Maximum potential intensity from Kerry Emanuel equation (kt)
-    # VVAV: Average (0 to 15 km) vertical velocity (m/s * 100) of a parcel lifted from the surface
-    #             where entrainment, the ice phase and the condensate weight are accounted for.
-    #             Note: Moisture and temperature biases between the operational and reanalysis files
-    #             make this variable inconsistent in the 2001-2007 sample, compared 2000 and before.
-    # VMFX:  Same as VVAV, but a density weighted vertical average.
-    # VVAC: Same as VVAV but with soundings from 0-500 km with GFS vortex removed
-    # HE07:  Storm motion relative helicity (m^2/s^2)*10 for p=1000 to 700 hPa, r=200 to 800 km
-    # HE05:   Same as HE05, for P=1000 to 500 hPa
-    # O500:   Pressure vertical velocity (hPa/day) at 500 hPa, averaged from r=0 to 1000 km
-    # O700:   Same as O500 at 700 hPa
-    # CFLX: Dry air predictor based on the difference in surface moisture flux between air with the observed (GFS) RH value, and with RH of air mixed from 500 hPa to the surface.
-    # MTPW: Total Precipitable Water (TPW) predictors at t=0 from the GFS analysis. The 21 values
-    #                 in this record are as follows:
-    # 1)	0-200 km average TPW (mm * 10)
-    # 2)	0-200 km TPW standard deviation (mm * 10)
-    # 3)	200-400 km average TPW (mm * 10)
-    # 4)	200-400 km TPW standard deviation (mm * 10)
-    # 5)	400-600 km average TPW (mm * 10)
-    # 6)	400-600 km TPW standard deviation (mm * 10)
-    # 7)	600-800 km average TPW (mm * 10)
-    # 8)	600-800 km TPW standard deviation (mm * 10)
-    # 9)	800-1000 km average TPW (mm * 10)
-    # 10)	800-1000 km TPW standard deviation (mm * 10)
-    # 11)	0-400 km average TPW (mm * 10)
-    # 12)	0-400 km TPW standard deviation (mm * 10)
-    # 13)	0-600 km average TPW (mm * 10)
-    # 14)	0-600 km TPW standard deviation (mm * 10)
-    # 15)	0-800 km average TPW (mm * 10)
-    # 16)	0-800 km TPW standard deviation (mm * 10)
-    # 17)	0-1000 km average TPW (mm * 10)
-    # 18)	0-1000 km TPW standard deviation (mm * 10)
-    # 19)	%TPW less than 45 mm, r=0 to 500 km in 90 deg azimuthal quadrant centered on up-shear direction
-    # 20)	0-500 km averaged TPW (mm * 10) in 90 deg up-shear quadrant
-    # 21)	0-500 km average TPW (mm * 10)
-    # PW01-PW19: Time dependent versions of the 21 TPW variables listed above.
-    # IRXX: Same as IR00 below, but generated from other predictors (not satellite data). These
-    #             should only be used to fill in for missing IR00 if needed.
-    # IR00: Predictors from GOES data (not time dependent). The 20 values in
-    #     this record are as follows:
-    #     1) Time (hhmm) of the GOES image, relative to this case
-    #     2) Average GOES ch 4 brightness temp (deg C *10), r=0-200 km
-    #     3) Stan. Dev. of GOES BT (deg C*10), r=0-200 km
-    #     4) Same as 2) for r=100-300 km
-    #     5) Same as 3) for r=100-300 km
-    #     6) Percent area r=50-200 km of GOES ch 4 BT < -10 C
-    #     7) Same as 6 for BT < -20 C
-    #     8) Same as 6 for BT < -30 C
-    #     9) Same as 6 for BT < -40 C
-    #     10) Same as 6 for BT < -50 C
-    #     11) Same as 6 for BT < -60 C
-    #     12) max BT from 0 to 30 km radius (deg C*10)
-    #     13) avg BT from 0 to 30 km radius (deg C*10)
-    #     14) radius of max BT (km)
-    #     15) min BT from 20 to 120 km radius (deg C*10)
-    #     16) avg BT from 20 to 120 km radius (deg C*10)
-    #     17)  radius of min BT (km)
-    #     18-20) Variables need for storm size estimation
-    # IRM1:  Same as IR00 but at 1.5 hours before initial time
-    # IRM3: Same as IR00 but at three hours before initial time
-    # PC00:   Principal components and related variables from IR imagery at t=0
-    # PCM1:  Same as PC00 but for 1.5 hours before initial time
-    # PCM3: Same as PC00 but for three hours before initial time
-    # RD20: Ocean depth of the 20 deg C isotherm (m), from satellite altimetry data
-    # RD26: Ocean depth of the 26 deg C isotherm (m) from satellite altimetry data
-    # RHCN: Ocean heat content (KJ/cm2) from satellite altimetry data. The number after the
-    #             label is the age in days of the OHC analysis used to estimate RD20, RD26 and RHCN.
-    # NSST: SST from the NCODA analysis (deg C*10)
-    # NTMX: Max ocean temperature in the NCODA vertical profile (deg C*10)
-    # NDMX: Depth of the max ocean temperature in the profile (m)
-    # NDML:  Depth of the mixed layer, defied and the depth where the T is 0.5 colder than
-    #                 at the surface (m). In rare cases, this is the depth where the T is 0.5 warmer than
-    #                 at the surface. In those cases, NDML is negative.
-    # ND30-ND16: Depth of the 30, 28, …, 16 deg C isotherms (m)
-    # NDFR: Depth of the lowest model level in the NCODA analysis (m).
-    # NTFR: Ocean T at the lowest level in the NCODA analysis (deg C*10)
-    # NOHC: Ocean heat content from the NCODA analysis (J/kg-deg C) relative to the 26 C isotherm
-    # NO20: Same as NOHC with respect to the 20 deg C isotherm
-    # XNST-XO20: Climatological values of the NCODA variables above (NSST through NO20).
-    # XDST: Climatological value of the daily Reynolds SST (deg C*10)
-    # LAST: The last line for this case
+    "REFC": {
+        "long_name": "Relative eddy momentum flux convergence, 100-600 km avg",
+        "units": "m/sec/day",
+        "Notes": "vs time",
+    },
+    "PEFC": {
+        "long_name": "Planetary eddy momentum flux convergence, 100-600 km avg",
+        "units": "m/sec/day",
+        "Notes": "vs time",
+    },
+    "T000": {
+        "long_name": "1000 hPa temperature, 200-800 km average",
+        "units": "dec C* 10",
+        "Notes": "",
+    },
+    "R000": {
+        "long_name": "1000 hPa relative humidity, 200-800 km average",
+        "units": "%",
+        "Notes": "",
+    },
+    "Z000": {
+        "long_name": "1000 hPa height deviation",
+        "units": "m",
+        "Notes": "Height deviation from the U.S. standard atmosphere",
+    },
+    "TLAT": {
+        "long_name": "850 hPa vortex center latitude",
+        "units": "deg N*10",
+        "Notes": "Vortex in the NCEP analysis",
+    },
+    "TLON": {
+        "long_name": "850 hPa vortex center longitude",
+        "units": "deg W*10",
+        "Notes": "Vortex in the NCEP analysis",
+    },
+    "TWAC": {
+        "long_name": "Average symmetric tangential wind at 850 hPa (0-600km average)",
+        "units": "m/sec *10",
+        "Notes": "from NCEP analysis",
+    },
+    "TWXC": {
+        "long_name": "Maximum 850 hPa symmetric tangential wind",
+        "units": "m/sec *10",
+        "Notes": "from NCEP analysis",
+    },
+    "G150": {
+        "long_name": "Averaged 150 hPa Temperature Perturbation (r=200-800km)",
+        "units": "deg C*10",
+        "Notes": """Perturbation due to the symmetric vortex calculated from the gradient thermal wind.
+        Radius centered on input lat/lon (not always the model/analysis vortex position)""",
+    },
+    "G200": {
+        "long_name": "Averaged 200 hPa Temperature Perturbation (r=200-800km)",
+        "units": "deg C*10",
+        "Notes": """Perturbation due to the symmetric vortex calculated from the gradient thermal wind.
+        Radius centered on input lat/lon (not always the model/analysis vortex position)""",
+    },
+    "G250": {
+        "long_name": "Averaged 250 hPa Temperature Perturbation (r=200-800km)",
+        "units": "deg C*10",
+        "Notes": """Perturbation due to the symmetric vortex calculated from the gradient thermal wind.
+        Radius centered on input lat/lon (not always the model/analysis vortex position)""",
+    },
+    "V000": {
+        "long_name": "Azimuthally averaged 1000 hPa tangential wind (r=500km)",
+        "units": "m/sec *10",
+        "Notes": "Azimuthally averaged at r=500 km from (TLAT,TLON). \nIf TLAT,TLON are not available, (LAT,LON) are used.",
+    },
+    "V850": {
+        "long_name": "Azimuthally averaged 850 hPa tangential wind (r=500km)",
+        "units": "m/sec *10",
+        "Notes": "Azimuthally averaged at r=500 km from (TLAT,TLON). \nIf TLAT,TLON are not available, (LAT,LON) are used.",
+    },
+    "V500": {
+        "long_name": "Azimuthally averaged 500 hPa tangential wind (r=500km)",
+        "units": "m/sec *10",
+        "Notes": "Azimuthally averaged at r=500 km from (TLAT,TLON). \nIf TLAT,TLON are not available, (LAT,LON) are used.",
+    },
+    "V300": {
+        "long_name": "Azimuthally averaged 300 hPa tangential wind (r=500km)",
+        "units": "m/sec *10",
+        "Notes": "Azimuthally averaged at r=500 km from (TLAT,TLON). \nIf TLAT,TLON are not available, (LAT,LON) are used.",
+    },
+    "TGRD": {
+        "long_name": "Averaged 850 to 700 hPa temperature gradient magnitude, r=0-500km",
+        "units": "deg C per m*107",  # Is this right? Verify with @Mark and @Kate
+        "Notes": "Estimated from the geostrophic thermal wind",
+    },
+    "TADV": {
+        "long_name": "Averaged 850 to 700 hPa temperature advection, r=0-500km",
+        "units": "deg per sec*106",  # Is this right? Verify with @Mark and @Kate
+        "Notes": "Estimated from the geostrophic thermal wind",
+    },
+    "PENC": {
+        "long_name": "Azimuthally averaged surface pressure at outer edge of vortex",
+        "units": "(hPa-1000)*10",
+        "Notes": "",
+    },
+    "SHRD": {
+        "long_name": "850-200 hPa shear magnitude (200-800km)",
+        "units": "kt *10",
+        "Notes": "vs time",
+    },
+    "SHDC": {
+        "long_name": "850-200 hPa shear magnitude, vortex removed (r=0-500km)",
+        "units": "kt *10",
+        "Notes": "vs time. Averaged from 0-500 km relative to 850 hPa vortex center",
+    },
+    "SDDC": {
+        "long_name": "Heading of above shear vector",
+        "units": "deg",
+        "Notes": "Westerly shear has a value of 90 deg",
+    },
+    "SHRG": {
+        "long_name": "Generalized 850-200 hPa shear magnitude",
+        "units": "kt *10",
+        "Notes": "vs time. Takes into account all levels from 1000 to 100 hPa",
+    },
+    "SHGC": {
+        "long_name": "Generalized 850-200 hPa shear magnitude, vortex removed (r=0-500km)",
+        "units": "kt *10",
+        "Notes": "vs time. Takes into account all levels from 1000 to 100 hPa. \nAveraged from 0-500 km relative to 850 hPa vortex center",
+    },
+    "DIVC": {
+        "long_name": "Centered 200 hPa divergence (r=0-1000km)",
+        "units": "sec-1 * 10**7",
+        "Notes": "vs time. Centered at 850 hPa vortex location",
+    },
+    "T150": {
+        "long_name": "200 to 800 km area average 150 hPa temperature",
+        "units": "deg C *10",
+        "Notes": "versus time",
+    },
+    "T200": {
+        "long_name": "200 to 800 km area average 200 hPa temperature",
+        "units": "deg C *10",
+        "Notes": "versus time",
+    },
+    "T250": {
+        "long_name": "200 to 800 km area average 250 hPa temperature",
+        "units": "deg C *10",
+        "Notes": "versus time",
+    },
+    "SHTD": {  # How is this different from SHTS? SDDC? @Mark and @Kate
+        "long_name": "Heading of above shear vector",
+        "units": "deg",
+        "Notes": "Westerly shear has a value of 90 deg.",
+    },
+    "SHRS": {
+        "long_name": "850-500 hPa shear magnitude",
+        "units": "kt *10",
+        "Notes": "vs time",
+    },
+    "SHTS": {
+        "long_name": "Heading of above shear vector",
+        "units": "deg",  # verify with @Mark and @Kate
+        "Notes": "",  # Should this say 90deg for Westerly shear? verify with @Mark and @Kate
+    },
+    "PENV": {
+        "long_name": "200 to 800 km average surface pressure",
+        "units": "(hPa-1000)*10",
+        "Notes": "",
+    },
+    "VMPI": {
+        "long_name": "Maximum potential intensity",
+        "units": "kt",
+        "Notes": "from Kerry Emanuel equation",
+    },
+    "VVAV": {
+        "long_name": "Average surface parcel vertical velocity",
+        "units": "m/s * 100",
+        "Notes": f"""Average vertical velocity (0 to 15 km) of a parcel lifted from the surface
+                 where entrainment, the ice phase and the condensate weight are accounted for.
+                 Note: Moisture and temperature biases between the operational and reanalysis files
+                 make this variable inconsistent in the 2001-2007 sample, compared 2000 and before.""",
+    },
+    "VMFX": {
+        "long_name": "Density Weighted Average surface parcel vertical velocity",
+        "units": "m/s * 100",
+        "Notes": f"""Average vertical velocity (0 to 15 km) of a parcel lifted from the surface
+                 where entrainment, the ice phase and the condensate weight are accounted for.
+                 Density weighted vertical average.
+                 Note: Moisture and temperature biases between the operational and reanalysis files
+                 make this variable inconsistent in the 2001-2007 sample, compared 2000 and before.""",
+    },
+    "VVAC": {
+        "long_name": "Average surface parcel vertical velocity, vortex removed, from soundings",
+        "units": "m/s * 100",
+        "Notes": f"""
+                 Same as VVAV but with soundings from 0-500 km with GFS vortex removed
+                 Average vertical velocity (0 to 15 km) of a parcel lifted from the surface
+                 where entrainment, the ice phase and the condensate weight are accounted for.
+                 Note: Moisture and temperature biases between the operational and reanalysis files
+                 make this variable inconsistent in the 2001-2007 sample, compared 2000 and before.""",
+    },
+    "HE07": {
+        "long_name": "1000-700 hPa Storm motion relative helicity, r=200-800 km",
+        "units": "m^2/s^2",
+        "Notes": "",
+    },
+    "HE07": {
+        "long_name": "1000-500 hPa Storm motion relative helicity, r=200-800 km",
+        "units": "m^2/s^2",
+        "Notes": "",
+    },
+    "O500": {
+        "long_name": "Average 500 hPa Pressure vertical velocity, r=0-1000 km ",
+        "units": "(hPa/day",
+        "Notes": "",
+    },
+    "O700": {
+        "long_name": "Average 700 hPa Pressure vertical velocity, r=0-1000 km ",
+        "units": "(hPa/day",
+        "Notes": "",
+    },
+    "CFLX": {
+        "long_name": "Dry air predictor",
+        "units": "%",  # veriy with @Mark and @ Kate
+        "Notes": "based on the difference in surface moisture flux between air with the \nobserved (GFS) RH value,and with RH of air mixed \nfrom 500 hPa to the surface.",
+    },
+    "MTPW": {
+        "long_name": "Total Precipitable Water (TPW) predictors @ t=0",
+        "units": "See Notes",
+        "Notes": f"""
+                     1)	0-200 km average TPW (mm * 10)
+                     2)	0-200 km TPW standard deviation (mm * 10)
+                     3)	200-400 km average TPW (mm * 10)
+                     4)	200-400 km TPW standard deviation (mm * 10)
+                     5)	400-600 km average TPW (mm * 10)
+                     6)	400-600 km TPW standard deviation (mm * 10)
+                     7)	600-800 km average TPW (mm * 10)
+                     8)	600-800 km TPW standard deviation (mm * 10)
+                     9)	800-1000 km average TPW (mm * 10)
+                     10)	800-1000 km TPW standard deviation (mm * 10)
+                     11)	0-400 km average TPW (mm * 10)
+                     12)	0-400 km TPW standard deviation (mm * 10)
+                     13)	0-600 km average TPW (mm * 10)
+                     14)	0-600 km TPW standard deviation (mm * 10)
+                     15)	0-800 km average TPW (mm * 10)
+                     16)	0-800 km TPW standard deviation (mm * 10)
+                     17)	0-1000 km average TPW (mm * 10)
+                     18)	0-1000 km TPW standard deviation (mm * 10)
+                     19)	%TPW less than 45 mm, r=0 to 500 km in 90 deg azimuthal quadrant centered on up-shear direction
+                     20)	0-500 km averaged TPW (mm * 10) in 90 deg up-shear quadrant
+                     21)	0-500 km average TPW (mm * 10)""",
+        "LeadTimeVar": False,
+        "Data_Length": 21,
+    },
+    "PW01": {
+        "long_name": "0-200 km average TPW",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW02": {
+        "long_name": "0-200 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW03": {
+        "long_name": "200-400 km average TPW",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW04": {
+        "long_name": "200-400 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW05": {
+        "long_name": "400-600 km average TPW",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW06": {
+        "long_name": "400-600 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW07": {
+        "long_name": "600-800 km average TPW",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW08": {
+        "long_name": "600-800 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW09": {
+        "long_name": "800-1000 km average TPW",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW10": {
+        "long_name": "800-1000 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW11": {"long_name": "0-400 km average TPW", "units": "mm*10", "Notes": ""},
+    "PW12": {
+        "long_name": "0-400 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW13": {
+        "long_name": "0-600 km average TPW",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW14": {
+        "long_name": "0-600 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW15": {"long_name": "0-800 km average TPW", "units": "mm*10", "Notes": ""},
+    "PW16": {
+        "long_name": "0-800 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW17": {"long_name": "0-1000 km average TPW", "units": "mm*10", "Notes": ""},
+    "PW18": {
+        "long_name": "0-1000 km TPW standard deviation",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "PW19": {
+        "long_name": "%TPW less than 45 mm",
+        "units": "Unit",
+        "Notes": "r=0 to 500 km in 90 deg azimuthal quadrant centered on up-shear direction. Time dependent",
+    },
+    "PW20": {
+        "long_name": "0-500 km averaged TPW ",
+        "units": "mm*10",
+        "Notes": "in 90 deg up-shear quadrant. Time dependent",
+    },
+    "PW21": {
+        "long_name": "0-500 km average TPW",
+        "units": "mm*10",
+        "Notes": "Time dependent",
+    },
+    "IR00": {
+        "long_name": "Predictors from GOES data",
+        "units": "See Notes",
+        "Notes": f""" Not time dependent. The 20 values in this record are as follows:
+                    1) Time (hhmm) of the GOES image, relative to this case
+                    2) Average GOES ch 4 brightness temp (deg C *10), r=0-200 km
+                    3) Stan. Dev. of GOES BT (deg C*10), r=0-200 km
+                    4) Same as 2) for r=100-300 km
+                    5) Same as 3) for r=100-300 km
+                    6) Percent area r=50-200 km of GOES ch 4 BT < -10 C
+                    7) Same as 6 for BT < -20 C
+                    8) Same as 6 for BT < -30 C
+                    9) Same as 6 for BT < -40 C
+                    10) Same as 6 for BT < -50 C
+                    11) Same as 6 for BT < -60 C
+                    12) max BT from 0 to 30 km radius (deg C*10)
+                    13) avg BT from 0 to 30 km radius (deg C*10)
+                    14) radius of max BT (km)
+                    15) min BT from 20 to 120 km radius (deg C*10)
+                    16) avg BT from 20 to 120 km radius (deg C*10)
+                    17)  radius of min BT (km)
+                    18-20) Variables need for storm size estimation""",
+        "LeadTimeVar": False,
+        "Data_Length": 20,
+    },
+    "IRXX": {
+        "long_name": "Inferred Predictors substituting GOES data",
+        "units": "See Notes",
+        "Notes": f"""Not time dependent.
+                     The same as IR00 but generated from other predictors (not satellite data).
+                     These should only be used to fill in for missing IR00 if needed.
+                    1) Time (hhmm) of the GOES image, relative to this case
+                    2) Average GOES ch 4 brightness temp (deg C *10), r=0-200 km
+                    3) Stan. Dev. of GOES BT (deg C*10), r=0-200 km
+                    4) Same as 2) for r=100-300 km
+                    5) Same as 3) for r=100-300 km
+                    6) Percent area r=50-200 km of GOES ch 4 BT < -10 C
+                    7) Same as 6 for BT < -20 C
+                    8) Same as 6 for BT < -30 C
+                    9) Same as 6 for BT < -40 C
+                    10) Same as 6 for BT < -50 C
+                    11) Same as 6 for BT < -60 C
+                    12) max BT from 0 to 30 km radius (deg C*10)
+                    13) avg BT from 0 to 30 km radius (deg C*10)
+                    14) radius of max BT (km)
+                    15) min BT from 20 to 120 km radius (deg C*10)
+                    16) avg BT from 20 to 120 km radius (deg C*10)
+                    17)  radius of min BT (km)
+                    18-20) Variables need for storm size estimation""",
+        "LeadTimeVar": False,
+        "Data_Length": 20,
+    },
+    "IRM1": {
+        "long_name": "Predictors from GOES data 1.5hrs before t0",
+        "units": "See Notes",
+        "Notes": f""" Not time dependent. The 20 values in this record are as follows:
+                    1) Time (hhmm) of the GOES image, relative to this case
+                    2) Average GOES ch 4 brightness temp (deg C *10), r=0-200 km
+                    3) Stan. Dev. of GOES BT (deg C*10), r=0-200 km
+                    4) Same as 2) for r=100-300 km
+                    5) Same as 3) for r=100-300 km
+                    6) Percent area r=50-200 km of GOES ch 4 BT < -10 C
+                    7) Same as 6 for BT < -20 C
+                    8) Same as 6 for BT < -30 C
+                    9) Same as 6 for BT < -40 C
+                    10) Same as 6 for BT < -50 C
+                    11) Same as 6 for BT < -60 C
+                    12) max BT from 0 to 30 km radius (deg C*10)
+                    13) avg BT from 0 to 30 km radius (deg C*10)
+                    14) radius of max BT (km)
+                    15) min BT from 20 to 120 km radius (deg C*10)
+                    16) avg BT from 20 to 120 km radius (deg C*10)
+                    17)  radius of min BT (km)
+                    18-20) Variables need for storm size estimation""",
+        "LeadTimeVar": False,
+        "Data_Length": 20,
+    },
+    "IRM3": {
+        "long_name": "Predictors from GOES data 3hrs before t0",
+        "units": "See Notes",
+        "Notes": f""" Not time dependent. The 20 values in this record are as follows:
+                    1) Time (hhmm) of the GOES image, relative to this case
+                    2) Average GOES ch 4 brightness temp (deg C *10), r=0-200 km
+                    3) Stan. Dev. of GOES BT (deg C*10), r=0-200 km
+                    4) Same as 2) for r=100-300 km
+                    5) Same as 3) for r=100-300 km
+                    6) Percent area r=50-200 km of GOES ch 4 BT < -10 C
+                    7) Same as 6 for BT < -20 C
+                    8) Same as 6 for BT < -30 C
+                    9) Same as 6 for BT < -40 C
+                    10) Same as 6 for BT < -50 C
+                    11) Same as 6 for BT < -60 C
+                    12) max BT from 0 to 30 km radius (deg C*10)
+                    13) avg BT from 0 to 30 km radius (deg C*10)
+                    14) radius of max BT (km)
+                    15) min BT from 20 to 120 km radius (deg C*10)
+                    16) avg BT from 20 to 120 km radius (deg C*10)
+                    17)  radius of min BT (km)
+                    18-20) Variables need for storm size estimation""",
+        "LeadTimeVar": False,
+        "Data_Length": 20,
+    },
+    "PC00": {
+        "long_name": "IR Principal Components and related variables @t0",
+        "units": "Unitless",  # confirm with @Mark and @Kate
+        "Notes": "",
+        "LeadTimeVar": False,
+        "Data_Length": 21,  # confirm with @Mark and @Kate
+    },
+    "PCM1": {
+        "long_name": "IR Principal Components and related variables @t0-1.5hrs",
+        "units": "Unitless",  # confirm with @Mark and @Kate
+        "Notes": "",
+        "LeadTimeVar": False,
+        "Data_Length": 21,  # confirm with @Mark and @Kate
+    },
+    "PCM3": {
+        "long_name": "IR Principal Components and related variables @t0-3hrs",
+        "units": "Unitless",  # confirm with @Mark and @Kate
+        "Notes": "",
+        "LeadTimeVar": False,
+        "Data_Length": 21,  # confirm with @Mark and @Kate
+    },
+    "RD20": {
+        "long_name": "Ocean depth of the 20 deg C isotherm",
+        "units": "m",
+        "Notes": "from satellite altimetry data",
+    },
+    "RD26": {
+        "long_name": "Ocean depth of the 26 deg C isotherm",
+        "units": "m",
+        "Notes": "from satellite altimetry data",
+    },
+    "RHCN": {
+        "long_name": "Ocean heat content",
+        "units": "KJ/cm2",
+        "Notes": "from satellite altimetry data",
+        "Info_Label": "Age, in days, of the OHC analysis used to estimate RD20, RD26 and RHCN",
+    },
+    "NSST": {
+        "long_name": "SST from the NCODA analysis",
+        "units": "deg C*10",
+        "Notes": "",
+    },
+    "NTMX": {
+        "long_name": "Max ocean temperature in the NCODA vertical profile",
+        "units": "deg C*10",
+        "Notes": "",
+    },
+    "NDMX": {
+        "long_name": "Depth of the max ocean temperature in the profile",
+        "units": "m",
+        "Notes": "",
+    },
+    "NDML": {
+        "long_name": "Depth of the mixed layer",
+        "units": "m",
+        "Notes": """Defined as the depth where the T is 0.5 colder than at the surface. 
+                    In rare cases, this is the depth where the T is 0.5 warmer than at the surface.
+                    In those cases, NDML is negative.""",  # verify with @Mark and @Kate
+    },
+    "ND30": {
+        "long_name": "Depth of the 30 deg C isotherm",
+        "units": "m",
+        "Notes": "",
+    },
+    "ND28": {
+        "long_name": "Depth of the 28 deg C isotherm",
+        "units": "m",
+        "Notes": "",
+    },
+    "ND26": {
+        "long_name": "Depth of the 26 deg C isotherm",
+        "units": "m",
+        "Notes": "",
+    },
+    "ND24": {
+        "long_name": "Depth of the 24 deg C isotherm",
+        "units": "m",
+        "Notes": "",
+    },
+    "ND22": {
+        "long_name": "Depth of the 22 deg C isotherm",
+        "units": "m",
+        "Notes": "",
+    },
+    "ND20": {
+        "long_name": "Depth of the 20 deg C isotherm",
+        "units": "m",
+        "Notes": "",
+    },
+    "ND18": {
+        "long_name": "Depth of the 18 deg C isotherm",
+        "units": "m",
+        "Notes": "",
+    },
+    "ND16": {
+        "long_name": "Depth of the 16 deg C isotherm",
+        "units": "m",
+        "Notes": "",
+    },
+    "NDFR": {
+        "long_name": "Depth of the lowest model level in the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "NTFR": {
+        "long_name": "Ocean T at the lowest level in the NCODA analysis",
+        "units": "deg C*10",
+        "Notes": "",
+    },
+    "NOHC": {
+        "long_name": "Ocean heat content relative to the 26 C isotherm, from the NCODA analysis",
+        "units": "J/kg-deg C",
+        "Notes": "",
+    },
+    "NO20": {
+        "long_name": "Ocean heat content relative to the 20 deg C isotherm, from the NCODA analysis",
+        "units": "J/kg-deg C",
+        "Notes": "",
+    },
+    "XNST": {
+        "long_name": "Climatological values of the SST from the NCODA analysis",
+        "units": "deg C*10",
+        "Notes": "",
+    },
+    "XTMX": {
+        "long_name": "Climatological values of the max ocean temperature in the NCODA vertical profile",
+        "units": "deg C*10",
+        "Notes": "",
+    },
+    "XDMX": {
+        "long_name": "Climatological values of the depth of the max ocean temperature in the profile",
+        "units": "m",
+        "Notes": "",
+    },
+    "XDML": {
+        "long_name": "Climatological values of the depth of the mixed layer",
+        "units": "m",
+        "Notes": """Defined as the depth where the T is 0.5 colder than at the surface. 
+                    In rare cases, this is the depth where the T is 0.5 warmer than at the surface.
+                    In those cases, XDML is negative.""",
+    },
+    "XD16": {
+        "long_name": "Climatological values of the depth of the 16 deg C isotherm from the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XD18": {
+        "long_name": "Climatological values of the depth of the 18 deg C isotherm from the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XD20": {
+        "long_name": "Climatological values of the depth of the 20 deg C isotherm from the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XD22": {
+        "long_name": "Climatological values of the depth of the 22 deg C isotherm from the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XD24": {
+        "long_name": "Climatological values of the depth of the 24 deg C isotherm from the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XD26": {
+        "long_name": "Climatological values of the depth of the 26 deg C isotherm from the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XD28": {
+        "long_name": "Climatological values of the depth of the 28 deg C isotherm from the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XD30": {
+        "long_name": "Climatological values of the depth of the 30 deg C isotherm from the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XDFR": {
+        "long_name": "Climatological values of the depth of the lowest model level in the NCODA analysis",
+        "units": "m",
+        "Notes": "",
+    },
+    "XTFR": {
+        "long_name": "Climatological values of the Ocean T at the lowest level in the NCODA analysis",
+        "units": "deg C*10",
+        "Notes": "",
+    },
+    "XOHC": {
+        "long_name": "Climatological values of the Ocean heat content relative to the 26 C isotherm, from the NCODA analysis",
+        "units": "KJ/cm2",
+        "Notes": "",
+    },
+    "X020": {
+        "long_name": "Climatological values of the Ocean heat content relative to the 20 C isotherm, from the NCODA analysis",
+        "units": "J/kg-deg C",
+        "Notes": "",
+    },
+    "XDST": {
+        "long_name": "Climatological value of the daily Reynolds SST",
+        "units": "deg C*10",
+        "Notes": "",
+    },
 }
 
 # %% Metpy units

@@ -9,7 +9,6 @@ Script to test handling of a single track
 """
 
 # %% Imports
-
 # OS and IO
 import os
 import sys
@@ -41,7 +40,7 @@ track = toolbox.tc_track(
 data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
 
-dc = dlib.Data_Collection(data_dir)
+# dc = dlib.Data_Collection(data_dir)
 
 # %%
 # track.process_data_collection(
@@ -68,55 +67,56 @@ dc = dlib.Data_Collection(data_dir)
 # %%
 
 track.load_data(ds_type="rect")
+track.load_timeseries()
 
-# %%
-wind_speed = (track.rect_ds.u**2 + track.rect_ds.v**2) ** 0.5
-wind_speed.attrs["units"] = "m/s"
-wind_speed.attrs["long_name"] = "Wind Speed"
-track.rect_ds["wind_speed"] = wind_speed
+# # %%
+# wind_speed = (track.rect_ds.u**2 + track.rect_ds.v**2) ** 0.5
+# wind_speed.attrs["units"] = "m/s"
+# wind_speed.attrs["long_name"] = "Wind Speed"
+# track.rect_ds["wind_speed"] = wind_speed
 
-# %%
-track.animate_data(
-    "vo",
-    ds_type="rect",
-    cmap="cividis",
-    ignore_levels=[
-        150,
-        70,
-        50,
-        30,
-        20,
-        10,
-    ],
-)
-# %%
-track.plot3D(
-    var="vo",
-    timestamp=track.timestamps[30],
-    ds_type="rect",
-    alpha=0.25,
-    ignore_levels=[
-        # 1000,
-        # 925,
-        # 850,
-        # 700,
-        # 600,
-        # 500,
-        # 400,
-        # 300,
-        # 200,
-        150,
-        70,
-        50,
-        30,
-        20,
-        10,
-    ],
-    figsize=(4, 6),
-    cmap="seismic",
-    # facecolor="white",
-    # text_color="black",
-)
+# # %%
+# track.animate_data(
+#     "vo",
+#     ds_type="rect",
+#     cmap="cividis",
+#     ignore_levels=[
+#         150,
+#         70,
+#         50,
+#         30,
+#         20,
+#         10,
+#     ],
+# )
+# # %%
+# track.plot3D(
+#     var="vo",
+#     timestamp=track.timestamps[30],
+#     ds_type="rect",
+#     alpha=0.25,
+#     ignore_levels=[
+#         # 1000,
+#         # 925,
+#         # 850,
+#         # 700,
+#         # 600,
+#         # 500,
+#         # 400,
+#         # 300,
+#         # 200,
+#         150,
+#         70,
+#         50,
+#         30,
+#         20,
+#         10,
+#     ],
+#     figsize=(4, 6),
+#     cmap="seismic",
+#     # facecolor="white",
+#     # text_color="black",
+# )
 # %%
 # track.rect_ds.isel(time=30).where(
 #     ~track.rect_ds.isel(time=30).isnull(), drop=True

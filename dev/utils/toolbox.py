@@ -579,6 +579,86 @@ class tc_track:
             <= radius
         ).T[np.newaxis, :, :]
 
+    def load_timeseries(self, **kwargs):
+        # check if the UID or the ALT_ID is in the ATCF format
+        if (
+            self.uid[0:2].isalpha()
+            and self.uid[0:2].isupper()
+            and self.uid[2:6].isdigit()
+        ):
+            # if it is, save the ID into a variable
+            atcf_id = self.uid
+        elif (
+            self.ALT_ID[0:2].isalpha()
+            and self.ALT_ID[0:2].isupper()
+            and self.ALT_ID[2:6].isdigit()
+        ):
+            # if it is, save the ID into a variable
+            atcf_id = self.ALT_ID
+
+        # extract the data folder from the kwargs
+        data_dir = kwargs.get(
+            "timeseries_dir",
+            os.path.join(self.filepath, "SHIPS_netcdfs"),
+        )
+
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, f"timeseries_ds"):
+            # Check if the dataset exists on disk
+            ds_path = os.path.join(data_dir, f"{atcf_id}.nc")
+
+            if os.path.exists(ds_path):
+                # If it does, load the dataset
+                # print("Loading dataset...")
+                setattr(
+                    self,
+                    "timeseries_ds",
+                    xr.open_dataset(ds_path),
+                )
+            else:
+                # Raise file not found error
+                print(
+                    f"Time series storm data for storm {self.uid} with ATCF_ID {atcf_id} not found in timeseries directory {data_dir}"
+                )
+                raise FileNotFoundError(f"{ds_path} not found")
+        pass
+
+    def serve_timeseries_data(self, **kwargs):
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, f"timeseries_ds"):
+            # if it doesnt, try loading it
+            self.load_timeseries(**kwargs)
+        pass
+
+        try:
+            coord_array = np.array(self.timeseries_ds.coords)
+            time_coord = False
+            for idx, coord in enumerate(coord_array):
+                if not time_coord:
+                    time_coord = (
+                        coord_array[idx]
+                        if np.any(
+                            [
+                                valid_name == coord
+                                for valid_name in constants.valid_coords["time"]
+                            ]
+                        )
+                        else False
+                    )
+        except:
+            raise ValueError("Time coordinate not found in dataset")
+        
+        other_coords = coord_array[~np.isin(coord_array, time_coord)]
+
+        ds = self.timeseries_ds.copy()
+        if other_coords is not None:
+            for coord in other_coords:
+                data = ds.where(~ds[coord].isnull(), drop=True)
+                print(f"Data shape: {data}")
+
+
+
+
     def get_rectmask(self, point, **kwargs):
         # read in parameters if submitted, otherwise use defaults
         grid = kwargs.get("grid", ll_gridder(**kwargs))

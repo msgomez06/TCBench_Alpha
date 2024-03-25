@@ -5,3 +5,7 @@
 *__pycache__*
 *.pyc
 environment.yml
+dev/utils/__pycache__/__init__.cpython-39.pyc
+dev/utils/__pycache__/constants.cpython-39.pyc
+dev/utils/__pycache__/data_lib.cpython-39.pyc
+dev/utils/__pycache__/toolbox.cpython-39.pyc

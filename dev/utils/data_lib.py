@@ -22,6 +22,8 @@ import metpy.units as mpunits
 import joblib as jl
 from memory_profiler import profile
 from pint import Quantity
+import dask.array as da
+import gc
 
 # TCBench Libraries
 try:
@@ -566,7 +568,127 @@ class Data_Collection:
             return xr.concat(job_array)
 
 
+# %%
+# inherit from data collection to make an AI data collection class
+class AI_Data_Collection:
+    def __init__(
+        self,
+        data_path: str,  # Path to the data storage directory
+        file_type: str = "nc",  # File type of the data, netcdf by default
+        **kwargs,
+    ):
+        assert os.path.isdir(
+            data_path
+        ), "The path to the data storage directory does not exist."
+
+        # Save the keyword arguments as attributes
+        for key, val in kwargs.items():
+            setattr(self, key, val)
+
+        self.data_path = data_path
+        self.file_type = file_type
+
+        # Initialize the data collection object
+        self._init_data_collection()
+
+    def _init_data_collection(self):
+        dir_contents = os.listdir(self.data_path)
+        # Create the dictionary that will hold the list of filenames within each year
+        # subdirectory
+        year_dict = {}
+        for content in dir_contents.copy():
+            # check if the content is a directory
+            if not os.path.isdir(os.path.join(self.data_path, content)):
+                # remove it from the list of contents
+                # print(f"{content} is not a directory. Skipping.")
+                dir_contents.remove(content)
+                continue
+            else:
+                # check that each subdirectory corresponds to a year
+                assert content in np.arange(1900, 2100, 1).astype(
+                    str
+                ), f"Subdirectory {content} is not a year."
+
+        for subdir in dir_contents:
+            # get the list of files in the subdirectory
+            file_list = os.listdir(os.path.join(self.data_path, subdir))
+
+            # check that all files are of the correct type
+            for file in file_list:
+                assert (
+                    file.split(".")[-1] == self.file_type
+                ), f"File {file} in {subdir} is not a(n) {self.file_type} file."
+
+            # add the file list to the year dictionary
+            year_dict[subdir] = file_list
+
+        global_year_list = np.array(list(year_dict.keys())).astype(int)
+        global_year_list = np.arange(
+            min(global_year_list), max(global_year_list) + 1
+        ).astype(str)
+
+        # save the year dictionary as an attribute
+        self.meta_dfs = year_dict
+
+        pass
+
+    def retrieve_ds(self, dates: list, **kwargs):
+        assert hasattr(
+            self, "meta_dfs"
+        ), "The data collection object has not been properly initialized."
+
+        # check that the years are an int or a list
+        assert isinstance(dates, np.datetime64) or isinstance(
+            dates, list
+        ), "provided dates must be a numpy datetime64 or a list"
+
+        # check if the years are a list, else make it a list
+        if not isinstance(dates, list):
+            dates = [dates]
+
+        ## TODO Loading by year was a failure. Need to load by individual dates, so this should expect a
+        ## list of dates
+
+        # check if all of the requested years are available
+        assert np.all(
+            np.isin(np.array(years).astype(str), list(self.meta_dfs.keys()))
+        ), f"Not all of the requested years are available in {self.data_path}. Please check the available years."
+
+        # retrieve the dataset for the requested dates
+        ds = None
+        for year in years:
+            key = str(year)
+            file_list = self.meta_dfs[key]
+
+            for file in file_list:
+                temp_ds = xr.open_dataset(os.path.join(self.data_path, key, file))
+                time_str = np.datetime64(file.split("_")[1]).astype("datetime64[ns]")
+                temp_ds = time_to_validtime(temp_ds, time_str, **kwargs)
+
+                if ds is None:
+                    ds = temp_ds.copy()
+                else:
+                    ds = xr.concat([ds, temp_ds.copy()], dim="time")
+
+                del temp_ds
+                gc.collect()
+
+        return ds
+
+
 # %% Functions
+def time_to_validtime(ds, forecast_time, **kwargs):
+    # Rename the time coordinate to valid_time
+    ds = ds.rename({"time": "valid_time"})
+
+    # Create a Dask array for the new dimension
+    new_dim_data = da.from_array([forecast_time], chunks=(-1,))
+
+    # Add the new dimension to the dataset
+    ds = ds.assign_coords(time=("time", new_dim_data))
+
+    return ds
+
 
 # %% Test running the data collection class
 if __name__ == "__main__":
@@ -579,6 +701,11 @@ if __name__ == "__main__":
     )
 
     print(dc.meta_dfs)
+
+    test = AI_Data_Collection(
+        "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/AI-milton/panguweather"
+    )
+    tst2 = test.retrieve_ds(years=2022)
 
     ## Test the retrieve_ds function
     # ds = dc.retrieve_ds(

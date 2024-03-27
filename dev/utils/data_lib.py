@@ -27,9 +27,9 @@ import gc
 
 # TCBench Libraries
 try:
-    from utils import constants
+    from utils import constants, toolbox
 except:
-    import constants
+    import constants, toolbox
 
 default = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 
@@ -640,7 +640,12 @@ class AI_Data_Collection:
         # check that the years are an int or a list
         assert isinstance(dates, np.datetime64) or isinstance(
             dates, list
-        ), "provided dates must be a numpy datetime64 or a list"
+        ), "provided dates must be a numpy datetime64 or a list of datetimes"
+
+        if isinstance(dates, list):
+            assert all(
+                [isinstance(date, np.datetime64) for date in dates]
+            ), "provided dates must be a numpy datetime64 or a list of datetimes"
 
         # check if the years are a list, else make it a list
         if not isinstance(dates, list):
@@ -649,31 +654,32 @@ class AI_Data_Collection:
         ## TODO Loading by year was a failure. Need to load by individual dates, so this should expect a
         ## list of dates
 
-        # check if all of the requested years are available
-        assert np.all(
-            np.isin(np.array(years).astype(str), list(self.meta_dfs.keys()))
-        ), f"Not all of the requested years are available in {self.data_path}. Please check the available years."
+        # # check if all of the requested years are available
+        # assert np.all(
+        #     np.isin(np.array(years).astype(str), list(self.meta_dfs.keys()))
+        # ), f"Not all of the requested years are available in {self.data_path}. Please check the available years."
 
         # retrieve the dataset for the requested dates
         ds = None
-        for year in years:
-            key = str(year)
+        for date in dates:
+            key = str(date.year)
             file_list = self.meta_dfs[key]
 
             for file in file_list:
-                temp_ds = xr.open_dataset(os.path.join(self.data_path, key, file))
                 time_str = np.datetime64(file.split("_")[1]).astype("datetime64[ns]")
-                temp_ds = time_to_validtime(temp_ds, time_str, **kwargs)
+                if date == time_str:
+                    print(date)
+        #         temp_ds = time_to_validtime(temp_ds, time_str, **kwargs)
 
-                if ds is None:
-                    ds = temp_ds.copy()
-                else:
-                    ds = xr.concat([ds, temp_ds.copy()], dim="time")
+        #         if ds is None:
+        #             ds = temp_ds.copy()
+        #         else:
+        #             ds = xr.concat([ds, temp_ds.copy()], dim="time")
 
-                del temp_ds
-                gc.collect()
+        #         del temp_ds
+        #         gc.collect()
 
-        return ds
+        # return ds
 
 
 # %% Functions
@@ -690,20 +696,39 @@ def time_to_validtime(ds, forecast_time, **kwargs):
     return ds
 
 
-# %% Test running the data collection class
-if __name__ == "__main__":
-    # Test running the data collection class
-    dc = Data_Collection(default)
+def datetime_filter(datetimes, **kwargs):
+    # Filter the datetimes to only include the ones that are within the
+    # valid datetimes. default is 00, 06, 12, 18 UTC times
 
-    # Test the variable availability function
-    dc.variable_availability(
-        # save_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+    valid_hours = kwargs.get("valid_hours", [0, 6, 12, 18])
+    assert isinstance(valid_hours, list), "valid_hours must be a list of integers."
+    assert np.all([isinstance(hour, int) for hour in valid_hours]), (
+        "valid_hours must be a list of integers. "
+        + f"Invalid types detected: {set([type(hour) for hour in valid_hours])}"
     )
 
-    print(dc.meta_dfs)
+    datetimes = pd.to_datetime(datetimes)
+    datetimes = datetimes[datetimes.hour.isin(valid_hours)]
+    return datetimes
+
+
+# %% Test running the data collection class
+if __name__ == "__main__":
+    # # Test running the data collection class
+    # dc = Data_Collection(default)
+
+    # # Test the variable availability function
+    # dc.variable_availability(
+    #     # save_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+    # )
+
+    # print(dc.meta_dfs)
 
     test = AI_Data_Collection(
         "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/AI-milton/panguweather"
+    )
+    datetimes = np.load(
+        "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/timestamps_sample.npy"
     )
     tst2 = test.retrieve_ds(years=2022)
 

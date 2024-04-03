@@ -632,24 +632,27 @@ class AI_Data_Collection:
 
         pass
 
-    def retrieve_ds(self, dates: list, **kwargs):
+    def retrieve_ds_list(self, dates: list, **kwargs):
+        # concatenating the datasets makes the resulting dataset blank
+        # for some reason. Need to return a list of datasets instead
         assert hasattr(
             self, "meta_dfs"
         ), "The data collection object has not been properly initialized."
 
         # check that the years are an int or a list
         assert isinstance(dates, np.datetime64) or isinstance(
-            dates, list
-        ), "provided dates must be a numpy datetime64 or a list of datetimes"
+            dates, np.ndarray
+        ), "provided dates must be a numpy datetime64 or an array of datetimes"
 
-        if isinstance(dates, list):
-            assert all(
-                [isinstance(date, np.datetime64) for date in dates]
-            ), "provided dates must be a numpy datetime64 or a list of datetimes"
+        if not isinstance(dates, np.ndarray):
+            assert dates.dtype == np.datetime64, "dates must be a numpy datetime64"
 
-        # check if the years are a list, else make it a list
-        if not isinstance(dates, list):
-            dates = [dates]
+        # # check if the years are a list, else make it a list
+        # if not isinstance(dates, list):
+        #     dates = [dates]
+
+        # transform the dates into a pandas datetime
+        dates = pd.to_datetime(dates)
 
         ## TODO Loading by year was a failure. Need to load by individual dates, so this should expect a
         ## list of dates
@@ -660,7 +663,15 @@ class AI_Data_Collection:
         # ), f"Not all of the requested years are available in {self.data_path}. Please check the available years."
 
         # retrieve the dataset for the requested dates
-        ds = None
+        # ds = None
+        chunk_opts = kwargs.get(
+            "chunk_opts",
+            {
+                "time": 1,
+                "valid_time": 1,
+            },
+        )
+        ds_list = []
         for date in dates:
             key = str(date.year)
             file_list = self.meta_dfs[key]
@@ -668,7 +679,35 @@ class AI_Data_Collection:
             for file in file_list:
                 time_str = np.datetime64(file.split("_")[1]).astype("datetime64[ns]")
                 if date == time_str:
-                    print(date)
+                    # temp_ds = xr.open_dataset(
+                    #     os.path.join(self.data_path, key, file), **kwargs
+                    # )
+                    # temp_ds = time_to_validtime(temp_ds, time_str, **kwargs)
+                    ds_list.append(
+                        time_to_validtime(
+                            xr.open_dataset(
+                                os.path.join(self.data_path, key, file), **kwargs
+                            ),
+                            time_str,
+                            **kwargs,
+                        )
+                    )
+
+                    # fig = plt.figure()
+                    # ds_list[-1].isel({"time": 0, "valid_time": -1}).msl.plot.imshow()
+                    # plt.show()
+                    # plt.close()
+                    # ds_list.append(temp_ds)
+                    # if ds is None:
+                    #     ds = temp_ds
+                    # else:
+                    #     ds = xr.concat(
+                    #         [
+                    #             ds,
+                    #             temp_ds,
+                    #         ],
+                    #         dim="time",
+                    #     )
         #         temp_ds = time_to_validtime(temp_ds, time_str, **kwargs)
 
         #         if ds is None:
@@ -679,11 +718,19 @@ class AI_Data_Collection:
         #         del temp_ds
         #         gc.collect()
 
-        # return ds
+        return ds_list
+        # ds.chunk(chunk_opts)
 
 
 # %% Functions
 def time_to_validtime(ds, forecast_time, **kwargs):
+    chunk_opts = kwargs.get(
+        "chunk_opts",
+        {
+            "time": 1,
+            "valid_time": 1,
+        },
+    )
     # Rename the time coordinate to valid_time
     ds = ds.rename({"time": "valid_time"})
 
@@ -693,7 +740,7 @@ def time_to_validtime(ds, forecast_time, **kwargs):
     # Add the new dimension to the dataset
     ds = ds.assign_coords(time=("time", new_dim_data))
 
-    return ds
+    return ds.chunk(chunk_opts)
 
 
 def datetime_filter(datetimes, **kwargs):
@@ -730,9 +777,14 @@ if __name__ == "__main__":
     datetimes = np.load(
         "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/timestamps_sample.npy"
     )
-    tst2 = test.retrieve_ds(years=2022)
+    tst = test.retrieve_ds(datetimes)
 
-    ## Test the retrieve_ds function
+    # for i in range(tst.time.size // 4):
+    #     fig = plt.figure()
+    #     tst.isel({"time": i * 4, "valid_time": 0}).u10.plot.imshow()
+    #     plt.show()
+    #     plt.close()
+
     # ds = dc.retrieve_ds(
     #         [
     #             "10m_u_component_of_wind",

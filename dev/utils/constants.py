@@ -210,7 +210,7 @@ valid_coords = {
     "longitude": ["lon", "Lon"],
     "time": ["time", "Time", "t"],
     "level": ["Lev", "lev", "pressure", "Pressure", "isobaric"],
-    "lead_time": ["lead", "Lead", "ldt", "LDT", "valid", "Valid"],
+    "leadtime": ["lead", "Lead", "ldt", "LDT", "valid", "Valid"],
 }
 
 

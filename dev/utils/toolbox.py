@@ -32,6 +32,7 @@ from matplotlib.collections import PolyCollection
 from mpl_toolkits.mplot3d.axes3d import Axes3D
 import matplotlib as mpl
 from matplotlib.animation import FuncAnimation
+from memory_profiler import profile
 
 
 # TCBench Libraries
@@ -202,7 +203,7 @@ def haversine(latp, lonp, lat_list, lon_list, **kwargs):
 
 
 def get_coord_vars(dataset):
-    lon_coord = lat_coord = time_coord = level_coord = False
+    lon_coord = lat_coord = time_coord = level_coord = leadtime_coord = False
     coord_array = np.array(dataset.coords)
 
     for idx, coord in enumerate(coord_array):
@@ -244,6 +245,18 @@ def get_coord_vars(dataset):
                 else False
             )
 
+        if not leadtime_coord:
+            leadtime_coord = (
+                coord_array[idx]
+                if np.any(
+                    [
+                        valid_name in coord
+                        for valid_name in constants.valid_coords["leadtime"]
+                    ]
+                )
+                else False
+            )
+
         if not level_coord:
             level_coord = (
                 coord_array[idx]
@@ -260,7 +273,7 @@ def get_coord_vars(dataset):
         [bool(lon_coord), bool(lat_coord), bool(time_coord)]
     ), "Missing lat, lon, or time coordinates in dataset"
 
-    return lat_coord, lon_coord, time_coord, level_coord
+    return lat_coord, lon_coord, time_coord, level_coord, leadtime_coord
 
 
 def hurricane_symbol():
@@ -647,7 +660,7 @@ class tc_track:
                     )
         except:
             raise ValueError("Time coordinate not found in dataset")
-        
+
         other_coords = coord_array[~np.isin(coord_array, time_coord)]
 
         ds = self.timeseries_ds.copy()
@@ -655,9 +668,6 @@ class tc_track:
             for coord in other_coords:
                 data = ds.where(~ds[coord].isnull(), drop=True)
                 print(f"Data shape: {data}")
-
-
-
 
     def get_rectmask(self, point, **kwargs):
         # read in parameters if submitted, otherwise use defaults
@@ -717,6 +727,10 @@ class tc_track:
         return mask
 
     def get_mask_series(self, timesteps, **kwargs):
+        """
+        This function returns a series of lat_lon masks corresponding
+        to the track at the given timesteps.
+        """
         # read in parameters if submitted, otherwise use defaults
         masktype = kwargs.get("masktype", "rad")
 
@@ -727,18 +741,25 @@ class tc_track:
         else:
             raise ValueError(f"Unsupported mask type {masktype}")
 
+        # Number of vertical levels
         num_levels = kwargs.get("num_levels", 1)
+        # Number of leadtimes
+        num_ldts = kwargs.get("num_leadtimes", None)
 
         mask = None
-
         for stamp in timesteps:
-            point = self.track[0][self.timestamps == stamp][0]
+            point = self.track[self.timestamps == stamp][0]
 
-            temp_mask = get_mask(point, **kwargs)
-            print(num_levels)
+            temp_mask = get_mask(point, **kwargs).astype(bool)[:, ::-1, :]
 
-            if num_levels > 1:
-                temp_mask = np.tile(temp_mask, (num_levels, 1, 1))[np.newaxis, :, :, :]
+            # if num_levels > 1:
+            #     temp_mask = np.tile(temp_mask, (num_levels, 1, 1))[np.newaxis, ...]
+
+            # if num_ldts is not None:
+            #     num_dims = 3 if num_levels > 1 else 2
+            #     temp_mask = np.tile(
+            #         temp_mask, (num_ldts, *np.ones(num_dims, dtype=int))
+            #     )[np.newaxis, ...]
 
             if mask is None:
                 mask = temp_mask
@@ -747,188 +768,333 @@ class tc_track:
 
         return mask
 
+    @profile
     def process_data_collection(self, data_collection, **kwargs):
         # Function to add all variables from a data collection object
         # to the track object
-        assert isinstance(
-            data_collection, data_lib.Data_Collection
-        ), f"Invalid data type {type(data_collection)}. Expected data_lib.data_collection"
+        assert isinstance(data_collection, data_lib.Data_Collection) or isinstance(
+            data_collection, data_lib.AI_Data_Collection
+        ), f"Invalid data type {type(data_collection)}. Expected data_lib.data_collection or data_lib.AI_data_collection"
 
-        # make a set of the years present in the tc_track timestamps
-        years = sorted(list(set(self.timestamps.astype("datetime64[Y]").astype(str))))
-        years = [int(year) for year in years]
+        if str(data_collection) == "TCBench_REANAL_DataCollection":
+            # make a set of the years present in the tc_track timestamps
+            years = sorted(
+                list(set(self.timestamps.astype("datetime64[Y]").astype(str)))
+            )
+            years = [int(year) for year in years]
 
-        for var_type in data_collection.meta_dfs:
-            # Skip the var type if it's empty
-            if len(data_collection.meta_dfs[var_type].columns) == 0:
-                (f"Skipping {var_type} because it's empty")
-                continue
+            for var_type in data_collection.meta_dfs:
+                # Skip the var type if it's empty
+                if len(data_collection.meta_dfs[var_type].columns) == 0:
+                    (f"Skipping {var_type} because it's empty")
+                    continue
 
-            ignored_vars = kwargs.get("ignore_vars", None)
-            if ignored_vars:
-                assert isinstance(
-                    ignored_vars, list
-                ), f"Invalid type for ignored_vars: {type(ignored_vars)}. Expected list"
+                ignored_vars = kwargs.get("ignore_vars", None)
+                if ignored_vars:
+                    assert isinstance(
+                        ignored_vars, list
+                    ), f"Invalid type for ignored_vars: {type(ignored_vars)}. Expected list"
 
-            var_list = data_collection.meta_dfs[var_type].index
-            if ignored_vars:
-                var_list = var_list[~var_list.isin(ignored_vars)]
-            var_meta = data_collection.meta_dfs[var_type].loc[var_list]
+                var_list = data_collection.meta_dfs[var_type].index
+                if ignored_vars:
+                    var_list = var_list[~var_list.isin(ignored_vars)]
+                var_meta = data_collection.meta_dfs[var_type].loc[var_list]
 
-            for year in years:
-                year = str(year)
-                # Assert each variable in the collection is available for each
-                # year the storm is active
-                assert (
-                    len(var_meta[year]) == var_meta[year].sum()
-                ), f"Missing variable data for {year}"
+                for year in years:
+                    year = str(year)
+                    # Assert each variable in the collection is available for each
+                    # year the storm is active
+                    assert (
+                        len(var_meta[year]) == var_meta[year].sum()
+                    ), f"Missing variable data for {year}"
 
-            for var in var_list:
+                for var in var_list:
 
-                ##TODO: check if file exsits and if it does, check if the variable is already in the file
-                # if it is, skip it
+                    ##TODO: check if file exsits and if it does, check if the variable is already in the file
+                    # if it is, skip it
 
-                print("Years", years, "Variable", var)
-                # Load the data for each variable
-                var_data, _ = data_collection.retrieve_ds(
-                    vars=var, years=years, **kwargs
-                )
-
-                print(var_data)
-
-                # get coordinate names
-                lat_coord, lon_coord, time_coord, level_coord = get_coord_vars(var_data)
-
-                print(f"Adding {var} to {self.uid}...")
-
-                # Sanitize timestamps because ibtracs includes unsual time steps
-                valid_steps = sanitize_timestamps(self.timestamps, var_data)
-
-                print(f"Processing time steps in parallel...")
-                # Loop through each time step in parallel
-                jl.Parallel(n_jobs=-1, verbose=2)(
-                    jl.delayed(self.process_timestep)(
-                        var_data.sel(time=t).copy(),
-                        **{
-                            "lat_coord": lat_coord,
-                            "lon_coord": lon_coord,
-                            "time_coord": time_coord,
-                            "level_coord": level_coord,
-                        },
-                        timestamp=t,
-                        **kwargs,
-                    )
-                    for t in valid_steps
-                )
-
-                # Garbage collect to free up memory
-                gc.collect()
-
-                # Read in the temporary files and merge them into the final file
-                file_list = os.listdir(self.filepath)
-
-                datavar = list(var_data.data_vars)[0]
-
-                # Filter out files that do not include the temp preix, variable name, and UID
-                for file in file_list.copy():
-                    if "." + datavar + "." not in file:
-                        file_list.remove(file)
-                        print(
-                            f"Removing {file} from file list because it doesn't include {datavar}"
-                        )
-                    elif "temp" not in file:
-                        file_list.remove(file)
-                        print(
-                            f"Removing {file} from file list because it doesn't include temp"
-                        )
-                    elif self.uid not in file:
-                        file_list.remove(file)
-                        print(
-                            f"Removing {file} from file list because it doesn't include {self.uid}"
-                        )
-
-                print("after removal: ", file_list)
-
-                # If temporary files are present, merge them into the final file
-                if len(file_list) > 0:
-                    # Load the temporary files into an xarray dataset
-                    temp_ds = xr.open_mfdataset(
-                        [self.filepath + file for file in file_list],
-                        concat_dim=time_coord,
-                        combine="nested",
-                        parallel=True,
+                    print("Years", years, "Variable", var)
+                    # Load the data for each variable
+                    var_data, _ = data_collection.retrieve_ds(
+                        vars=var, years=years, **kwargs
                     )
 
-                    # Select the non-null data from the temporary dataset
-                    temp_ds = temp_ds.where(~temp_ds.isnull().compute(), drop=True)
+                    print(var_data)
 
-                    # calculate the encoding for the final dataset
-                    encoding = {}
-                    for data_var in temp_ds.data_vars:
-                        encoding[data_var] = {
-                            "original_shape": temp_ds[data_var].shape,
-                            "_FillValue": temp_ds[data_var].encoding.get(
-                                "_FillValue", -32767
-                            ),
-                            "dtype": kwargs.get("dtype", np.int16),
-                            "add_offset": temp_ds[data_var].mean().compute().values,
-                            "scale_factor": temp_ds[data_var].std().compute().values
-                            / kwargs.get("scale_divisor", 2000),
-                        }
+                    # get coordinate names
+                    lat_coord, lon_coord, time_coord, level_coord, _ = get_coord_vars(
+                        var_data
+                    )
 
-                    # if the UID dataset exists, merge the new data into it
-                    if os.path.exists(
-                        self.filepath + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
-                    ):
-                        print(f"Merging {var} into {self.uid}...")
-                        # Load the UID dataset
-                        final_ds = xr.open_dataset(
-                            self.filepath
-                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
+                    print(f"Adding {var} to {self.uid}...")
+
+                    # Sanitize timestamps because ibtracs includes unsual time steps
+                    valid_steps = sanitize_timestamps(self.timestamps, var_data)
+
+                    print(f"Processing time steps in parallel...")
+                    # Loop through each time step in parallel
+                    jl.Parallel(n_jobs=-1, verbose=2)(
+                        jl.delayed(self.process_timestep)(
+                            var_data.sel(time=t).copy(),
+                            **{
+                                "lat_coord": lat_coord,
+                                "lon_coord": lon_coord,
+                                "time_coord": time_coord,
+                                "level_coord": level_coord,
+                            },
+                            timestamp=t,
+                            **kwargs,
                         )
-
-                        # Merge the new data into the final dataset
-                        final_ds = xr.merge([final_ds, temp_ds])
-
-                        # Save the final dataset to disk
-                        final_ds.to_netcdf(
-                            self.filepath
-                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
-                            mode="w",
-                            compute=True,
-                            encoding=encoding,
-                        )
-
-                        # Workaround to rewrite file with appended file
-                        # Overwrite the original file with the appended file
-                        subprocess.run(
-                            [
-                                "mv",
-                                "-f",
-                                f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
-                                f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
-                            ]
-                        )
-                    else:
-                        # Save the final dataset to disk
-                        temp_ds.to_netcdf(
-                            self.filepath
-                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
-                            mode="w",
-                            compute=True,
-                            encoding=encoding,
-                        )
-
-                    # Close the temporary dataset
-                    temp_ds.close()
-                    del temp_ds
-
-                    # delete the temporary files
-                    for file in file_list:
-                        os.remove(self.filepath + file)
+                        for t in valid_steps
+                    )
 
                     # Garbage collect to free up memory
                     gc.collect()
+
+                    # Read in the temporary files and merge them into the final file
+                    file_list = os.listdir(self.filepath)
+
+                    datavar = list(var_data.data_vars)[0]
+
+                    # Filter out files that do not include the temp preix, variable name, and UID
+                    for file in file_list.copy():
+                        if "." + datavar + "." not in file:
+                            file_list.remove(file)
+                            print(
+                                f"Removing {file} from file list because it doesn't include {datavar}"
+                            )
+                        elif "temp" not in file:
+                            file_list.remove(file)
+                            print(
+                                f"Removing {file} from file list because it doesn't include temp"
+                            )
+                        elif self.uid not in file:
+                            file_list.remove(file)
+                            print(
+                                f"Removing {file} from file list because it doesn't include {self.uid}"
+                            )
+
+                    print("after removal: ", file_list)
+
+                    # If temporary files are present, merge them into the final file
+                    if len(file_list) > 0:
+                        # Load the temporary files into an xarray dataset
+                        temp_ds = xr.open_mfdataset(
+                            [self.filepath + file for file in file_list],
+                            concat_dim=time_coord,
+                            combine="nested",
+                            parallel=True,
+                        )
+
+                        # Select the non-null data from the temporary dataset
+                        temp_ds = temp_ds.where(~temp_ds.isnull().compute(), drop=True)
+
+                        # calculate the encoding for the final dataset
+                        encoding = {}
+                        for data_var in temp_ds.data_vars:
+                            encoding[data_var] = {
+                                "original_shape": temp_ds[data_var].shape,
+                                "_FillValue": temp_ds[data_var].encoding.get(
+                                    "_FillValue", -32767
+                                ),
+                                "dtype": kwargs.get("dtype", np.int16),
+                                "add_offset": temp_ds[data_var].mean().compute().values,
+                                "scale_factor": temp_ds[data_var].std().compute().values
+                                / kwargs.get("scale_divisor", 2000),
+                            }
+
+                        # if the UID dataset exists, merge the new data into it
+                        if os.path.exists(
+                            self.filepath
+                            + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
+                        ):
+                            print(f"Merging {var} into {self.uid}...")
+                            # Load the UID dataset
+                            final_ds = xr.open_dataset(
+                                self.filepath
+                                + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc"
+                            )
+
+                            # Merge the new data into the final dataset
+                            final_ds = xr.merge([final_ds, temp_ds])
+
+                            # Save the final dataset to disk
+                            final_ds.to_netcdf(
+                                self.filepath
+                                + f"{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
+                                mode="w",
+                                compute=True,
+                                encoding=encoding,
+                            )
+
+                            # Workaround to rewrite file with appended file
+                            # Overwrite the original file with the appended file
+                            subprocess.run(
+                                [
+                                    "mv",
+                                    "-f",
+                                    f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.appended.nc",
+                                    f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
+                                ]
+                            )
+                        else:
+                            # Save the final dataset to disk
+                            temp_ds.to_netcdf(
+                                self.filepath
+                                + f"{self.uid}.{kwargs.get('masktype', 'rad')}.nc",
+                                mode="w",
+                                compute=True,
+                                encoding=encoding,
+                            )
+
+                        # Close the temporary dataset
+                        temp_ds.close()
+                        del temp_ds
+
+                        # delete the temporary files
+                        for file in file_list:
+                            os.remove(self.filepath + file)
+
+                        # Garbage collect to free up memory
+                        gc.collect()
+        elif str(data_collection) == "TCBench_AI_DataCollection":
+            # AI models only have 3 hourly data available - filter the track timestamps
+            # to only include 3 hourly data
+            ds = data_collection.retrieve_ds(self.timestamps, **kwargs)
+
+            lat_coord, lon_coord, time_coord, level_coord, leadtime_coord = (
+                get_coord_vars(ds)
+            )
+
+            vars_to_keep = kwargs.get(
+                "vars_to_keep",
+                {
+                    "u10": [
+                        None,
+                        {"units": "m s**-1", "long_name": "10 metre U wind component"},
+                    ],
+                    "v10": [
+                        None,
+                        {"units": "m s**-1", "long_name": "10 metre V wind component"},
+                    ],
+                    "msl": [
+                        None,
+                        {
+                            "units": "Pa",
+                            "long_name": "Mean sea level pressure",
+                            "standard_name": "air_pressure_at_sea_level",
+                        },
+                    ],
+                    "z": [
+                        500,
+                        {
+                            "units": "m**2 s**-2",
+                            "long_name": "Geopotential",
+                            "standard_name": "geopotential",
+                        },
+                    ],
+                    "t": [
+                        850,
+                        {
+                            "units": "K",
+                            "long_name": "Temperature",
+                            "standard_name": "air_temperature",
+                        },
+                    ],
+                },
+            )
+
+            da_list = []
+            for var, [level, attrs] in vars_to_keep.items():
+                if level is not None:
+                    assert (
+                        type(level) == ds[level_coord].dtype
+                        and level in ds[level_coord].values
+                    ), f"Invalid level {level}. Make sure you select a single level for each data variable."
+                    # TODO: Add support for multiple levels
+                    da = ds[var].sel({level_coord: level})
+                    da.rename(f"{var}_{level}")
+                    da = da.drop(level_coord)
+                    da.attrs.update(attrs)
+                else:
+                    da = ds[var]
+                da_list.append(da)
+            temp_ds = xr.merge(da_list).chunk()
+
+            # limit the number of leadtimes
+            num_days = kwargs.get("num_days", 7)
+            steps_per_day = kwargs.get("steps_per_day", 4)
+
+            temp_ds = temp_ds.isel(
+                {
+                    leadtime_coord: [
+                        0,
+                        1,
+                        2,
+                        *np.arange(3, num_days * steps_per_day + 1, 4),
+                    ]
+                }
+            )
+
+            # num_levels = ds[level_coord].size
+            num_leadtimes = temp_ds[leadtime_coord].size
+            timesteps = temp_ds[time_coord].values
+
+            # Get the mask for the track. For AI models, we have a set mask of +-30° in
+            # latitude and longitude for 7 days. For 5 days, we set it to +-25°
+            circum_points = kwargs.get("circum_points", 30 * 4)
+
+            mask = self.get_mask_series(
+                timesteps=timesteps,
+                masktype="rect",
+                circum_points=circum_points,
+                # num_levels=num_levels,
+                # num_leadtimes=num_leadtimes,
+            )
+
+            # Create a mask data array
+            mask_da = xr.DataArray(
+                mask,
+                dims=[time_coord, lat_coord, lon_coord],
+                coords={
+                    time_coord: timesteps,
+                    lat_coord: ds[lat_coord],
+                    lon_coord: ds[lon_coord],
+                },
+            )
+
+            filtered_ds = temp_ds.where(mask_da, drop=True).chunk()
+            filtered_ds.attrs.update({"AI_model": data_collection.ai_model})
+
+            # # filter out nan values
+            # filtered_ds = filtered_ds.where(~filtered_ds.isnull(), drop=True)
+
+            if kwargs.get("reencode", False):
+                # calculate the encoding for the final dataset
+                print("encoding...", flush=True)
+                encoding = {}
+                for data_var in filtered_ds.data_vars:
+                    encoding[data_var] = {
+                        "original_shape": filtered_ds[data_var].shape,
+                        "_FillValue": filtered_ds[data_var].encoding.get(
+                            "_FillValue", -32767
+                        ),
+                        "dtype": kwargs.get("dtype", np.int16),
+                        "add_offset": filtered_ds[data_var].mean().compute().values,
+                        "scale_factor": filtered_ds[data_var].std().compute().values
+                        / kwargs.get("scale_divisor", 1000),
+                    }
+
+            # Save the final dataset to disk
+            print("saving...", flush=True)
+            filtered_ds.to_netcdf(
+                self.filepath + f"{self.uid}.AI.{data_collection.ai_model}.nc",
+                mode="w",
+                compute=True,
+                # encoding=encoding,
+            )
+
+            return
 
     def process_timestep(self, data, **kwargs):
         """
@@ -1033,7 +1199,6 @@ class tc_track:
                 num_levels = data[level_coord].shape[0]
 
             mask = self.get_mask(num_levels=num_levels, **kwargs)
-            # mask = self.get_mask_series(valid_steps, **kwargs)
 
             data = data.where(mask)
             data.attrs = attrs
@@ -1379,7 +1544,7 @@ class tc_track:
 
         fig.set_facecolor(facecolor)
         ax3d.set_facecolor(facecolor)
-        lat_coord, lon_coord, time_coord, level_coord = get_coord_vars(data)
+        lat_coord, lon_coord, time_coord, level_coord, _ = get_coord_vars(data)
 
         if minn is None and maxx is None:
             minn, maxx = (

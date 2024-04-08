@@ -2,8 +2,8 @@
 *.ruff_cache/*
 *data/*
 *.nc
-*__pycache__*
-dev/*cpython*
+./*__pycache__*
+./dev/*cpython*
 *.pyc
 environment.yml
 dev/slurm/

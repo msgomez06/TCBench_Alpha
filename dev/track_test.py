@@ -25,8 +25,8 @@ full_data = toolbox.read_hist_track_file(
     tracks_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/"
 )
 # %%
-data_2005 = full_data[full_data.ISO_TIME.dt.year == 2005]
-storm = data_2005[data_2005.NAME == "EMILY"]
+data_2005 = full_data[full_data.ISO_TIME.dt.year == 2020]
+storm = data_2005[data_2005.NAME == "LAURA"]
 
 # %%
 track = toolbox.tc_track(
@@ -65,9 +65,14 @@ save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data
 # )
 
 # %%
+dc = dlib.AI_Data_Collection(
+    "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/AI-milton/panguweather"
+)
 
-track.load_data(ds_type="rect")
-track.load_timeseries()
+tst = track.process_data_collection(dc)
+
+# track.load_data(ds_type="rect")
+# track.load_timeseries()
 
 # # %%
 # wind_speed = (track.rect_ds.u**2 + track.rect_ds.v**2) ** 0.5

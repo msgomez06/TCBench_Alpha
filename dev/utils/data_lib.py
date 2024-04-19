@@ -53,7 +53,7 @@ class Data_Collection:
         ],
         file_type: str = "nc",  # File type of the data, netcdf by default
         **kwargs,
-    ):
+    ) -> None:
         assert os.path.isdir(
             data_path
         ), "The path to the data storage directory does not exist."
@@ -571,8 +571,6 @@ class Data_Collection:
             return xr.concat(job_array)
 
 
-# %%
-# inherit from data collection to make an AI data collection class
 class AI_Data_Collection:
     def __str__(self):
         return "TCBench_AI_DataCollection"
@@ -582,7 +580,7 @@ class AI_Data_Collection:
         data_path: str,  # Path to the data storage directory
         file_type: str = "nc",  # File type of the data, netcdf by default
         **kwargs,
-    ):
+    ) -> None:
         assert os.path.isdir(
             data_path
         ), "The path to the data storage directory does not exist."
@@ -689,6 +687,14 @@ class AI_Data_Collection:
         return ds
 
 
+class track_set:
+    def __init__(self, track_list) -> None:
+        # assert track_list is a list
+        assert isinstance(track_list, list), "track_list must be a list"
+
+        pass
+
+
 # %% Functions
 def time_to_validtime(ds, forecast_time, **kwargs):
     chunk_opts = kwargs.get(
@@ -766,15 +772,5 @@ if __name__ == "__main__":
     #         1999,
     #     )
 
-    # # Test the calculate_field function
-    # dc.calculate_field(
-    #     function=mpcalc.potential_temperature,
-    #     argument_names={"temperature": "temperature", "pressure": "pressure"},
-    #     units={"temperature": "kelvin", "pressure": "millibar"},
-    #     # chunking={"chunks": {"time": 200}},
-    #     levels=950,
-    #     years=2020,
-    #     save=True,
-    # ).chunk({"time": 200}).to_netcdf("/scratch/mgomezd1/test.nc")
 
 # %%

@@ -161,6 +161,8 @@ ibtracs_cols = track_cols(  # Storm ID number
         "TIME_coord": "ISO_TIME",
         "loader": pd.read_csv,
         "ALT_ID": "USA_ATCF_ID",
+        "WIND": "USA_WIND",
+        "PRES": "USA_PRES",
     },
 )
 
@@ -579,7 +581,7 @@ SHIPS_metadata = {
         "units": "m^2/s^2",
         "Notes": "",
     },
-    "HE07": {
+    "HE05": {
         "long_name": "1000-500 hPa Storm motion relative helicity, r=200-800 km",
         "units": "m^2/s^2",
         "Notes": "",
@@ -863,6 +865,11 @@ SHIPS_metadata = {
         "long_name": "SST from the NCODA analysis",
         "units": "deg C*10",
         "Notes": "",
+    },
+    "NSTA": {
+        "long_name": "Averaged SST from the NCODA analysis",
+        "units": "deg C*10",
+        "Notes": "spatially averaged over 5 points (storm center, + 50 km N, E, S and W of center)",
     },
     "NTMX": {
         "long_name": "Max ocean temperature in the NCODA vertical profile",

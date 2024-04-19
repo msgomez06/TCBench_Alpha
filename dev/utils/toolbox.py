@@ -500,7 +500,10 @@ def get_regrider(dataset: xr.Dataset, lat_coord: str, lon_coord: str, **kwargs):
 
 # Class presenting tracks
 class tc_track:
-    def __init__(self, UID, NAME, track, timestamps, **kwargs):
+    def __str__(self):
+        return f"TCBench_track_{self.UID}"
+
+    def __init__(self, UID, NAME, track, timestamps, **kwargs) -> None:
         try:
             assert isinstance(
                 UID, str
@@ -522,6 +525,8 @@ class tc_track:
             self.name = NAME
             self.track = (track,)[0]  # Weird workaround - look into fixing
             self.timestamps = timestamps
+            self.wind = kwargs.get("wind", None)
+            self.pressure = kwargs.get("pres", None)
 
             # Add alternate ID if available
             self.ALT_ID = kwargs.get("ALT_ID", None)

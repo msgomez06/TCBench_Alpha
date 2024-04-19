@@ -57,12 +57,19 @@ with open(input_path, "r") as file:
             # if the dataset exists, check if the ATCF_ID is the same
             elif ds.attrs["ATCF_ID"] != data_dict["ATCF_ID"]:
 
-                # If the ATCF_ID is different, write the dataset to a file
-                # and create a new dataset
-                ds.to_netcdf(
-                    os.path.join(output_folder, f"{ds.attrs['ATCF_ID']}.nc"),
-                    mode="w",
-                )
+                # If the ATCF_ID is different, check if the file
+                # already exists. If it does, print that it does.
+                # If it does not, write the dataset to a file
+                if os.path.exists(
+                    os.path.join(output_folder, f"{ds.attrs['ATCF_ID']}.nc")
+                ):
+                    print(f"File {ds.attrs['ATCF_ID']}.nc already exists. Skipping.")
+                else:
+                    # write the dataset to a file
+                    ds.to_netcdf(
+                        os.path.join(output_folder, f"{ds.attrs['ATCF_ID']}.nc"),
+                        mode="w",
+                    )
                 ds = xr.Dataset()
                 ds.attrs["ATCF_ID"] = data_dict["ATCF_ID"]
                 print(ds.attrs["ATCF_ID"])

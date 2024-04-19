@@ -163,6 +163,7 @@ ibtracs_cols = track_cols(  # Storm ID number
         "ALT_ID": "USA_ATCF_ID",
         "WIND": "USA_WIND",
         "PRES": "USA_PRES",
+        "SEASON": "SEASON",
     },
 )
 

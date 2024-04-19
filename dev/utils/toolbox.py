@@ -300,6 +300,63 @@ def hurricane_symbol():
     return mpl.path.Path(3 * u, codes, closed=False)
 
 
+def get_TC_seasons(
+    tracks_file="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/",
+    **kwargs,
+):
+    cols = kwargs.get("track_columns", constants.ibtracs_cols)
+    min_season = kwargs.get("min_season", 1990)
+    track_data = read_hist_track_file(
+        tracks_path=tracks_file,
+        track_cols=cols,
+        backend=cols._track_cols__metadata.get("loader"),
+        **kwargs,
+    )
+
+    uidx = cols._track_cols__metadata.get("UID")
+    name = cols._track_cols__metadata.get("COSMETIC_NAME")
+    x = cols._track_cols__metadata.get("X_coord")
+    y = cols._track_cols__metadata.get("Y_coord")
+    t = cols._track_cols__metadata.get("TIME_coord")
+    alt_id = cols._track_cols__metadata.get("ALT_ID")
+    wind = cols._track_cols__metadata.get("WIND")
+    pres = cols._track_cols__metadata.get("PRES")
+    season_coord = cols._track_cols__metadata.get("SEASON", None)
+
+    if season is not None:
+        track_data = track_data[track_data[season_coord] >= min_season]
+        unique_seasons = track_data[season_coord].unique()
+    else:
+        track_data = track_data[track_data[t].dt.year >= min_season]
+        unique_seasons = track_data[t].dt.year.unique()
+
+    season_dict = {}
+    for season in unique_seasons:
+        if season is not None:
+            unique_storms = track_data[track_data[season_coord] == season][
+                uidx
+            ].unique()
+        else:
+            unique_storms = track_data[track_data[t].dt.year == season][uidx].unique()
+
+        season_storms = []
+        for storm in unique_storms:
+            storm_data = track_data[track_data[uidx] == storm]
+            track = tc_track(
+                UID=uidx,
+                NAME=storm_data[name].iloc[0],
+                track=storm_data[[y, x]].to_numpy(),
+                timestamps=storm_data[t].to_numpy(),
+                ALT_ID=storm_data[alt_id].iloc[0],
+                wind=storm_data[wind].to_numpy(),
+                pres=storm_data[pres].to_numpy(),
+            )
+            season_storms.append(track)
+        season_dict[season] = season_storms
+
+    return season_dict
+
+
 # %% Data Processing / Preprocessing Library
 """
 This cell contains the following classes and functions:

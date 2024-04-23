@@ -53,7 +53,7 @@ with open(input_path, "r") as file:
             if ds is None:
                 ds = xr.Dataset()
                 ds.attrs["ATCF_ID"] = data_dict["ATCF_ID"]
-                print(ds.attrs["ATCF_ID"])
+                print(ds.attrs["ATCF_ID"], flush=True)
             # if the dataset exists, check if the ATCF_ID is the same
             elif ds.attrs["ATCF_ID"] != data_dict["ATCF_ID"]:
 
@@ -63,7 +63,10 @@ with open(input_path, "r") as file:
                 if os.path.exists(
                     os.path.join(output_folder, f"{ds.attrs['ATCF_ID']}.nc")
                 ):
-                    print(f"File {ds.attrs['ATCF_ID']}.nc already exists. Skipping.")
+                    print(
+                        f"File {ds.attrs['ATCF_ID']}.nc already exists. Skipping.",
+                        flush=True,
+                    )
                 else:
                     # write the dataset to a file
                     ds.to_netcdf(
@@ -72,7 +75,7 @@ with open(input_path, "r") as file:
                     )
                 ds = xr.Dataset()
                 ds.attrs["ATCF_ID"] = data_dict["ATCF_ID"]
-                print(ds.attrs["ATCF_ID"])
+                print(ds.attrs["ATCF_ID"], flush=True)
 
         if data[-1] == "TIME":
             # These are the lead times

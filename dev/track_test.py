@@ -74,7 +74,7 @@ save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data
 # tst = track.process_data_collection(dc)
 
 # track.load_data(ds_type="rect")
-# track.load_timeseries()
+track.load_timeseries()
 
 # # %%
 # wind_speed = (track.rect_ds.u**2 + track.rect_ds.v**2) ** 0.5

@@ -23,23 +23,28 @@ seasons = toolbox.get_TC_seasons(
 data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/AI-milton/panguweather"
 dc = dlib.AI_Data_Collection(data_dir)
 
+process = False
+
 # %%
 # Process the tracks
 for season, storms in seasons.items():
     print(f"Starting to process {season}. which contains {len(storms)} storms...")
 
-    for storm in storms:
-        print(
-            f"Storm: {storm.uid} exists: {os.path.exists(os.path.join(storm.filepath, storm.uid + '.AI.panguweather.nc'))}"
+    if process:
+        # determine the number of processors that can be used
+        n_jobs = jl.cpu_count()
+
+        # process the tracks
+        jl.Parallel(n_jobs=n_jobs)(
+            jl.delayed(storm.process_data_collection)(dc) for storm in storms
         )
-
-    # # determine the number of processors that can be used
-    # n_jobs = jl.cpu_count()
-
-    # # process the tracks
-    # jl.Parallel(n_jobs=n_jobs)(
-    #     jl.delayed(storm.process_data_collection)(dc) for storm in storms
-    # )
+    else:
+        input_samples = []
+        target_samples = []
+        for storm in storms:
+            inputs, outputs, _ = storm.serve_ai_data()
+            input_samples.append(inputs)
+            target_samples.append(outputs)
 
 
 # %%

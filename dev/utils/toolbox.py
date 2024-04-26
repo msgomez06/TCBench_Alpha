@@ -365,7 +365,7 @@ def get_TC_seasons(
                 wind=storm_data[wind].to_numpy(),
                 pres=storm_data[pres].to_numpy(),
                 storm_season=season,
-                **kwargs
+                **kwargs,
             )
             season_storms.append(track)
         season_dict[season] = season_storms
@@ -524,11 +524,11 @@ def process_py_track_data(data, track_cols):
 
 
 # Functions to sanitize timestamp data
-def sanitize_timestamps(timestamps, data):
+def sanitize_timestamps(timestamps, data, time_coord="time"):
     # Sanitize timestamps because ibtracs includes unsual time steps,
     # e.g. 603781 (Katrina, 2005) includes 2005-08-25 22:30:00,
     # 2005-08-29 11:10:00, 2005-08-29 14:45:00
-    valid_steps = timestamps[np.isin(timestamps, data.time.values)]
+    valid_steps = timestamps[np.isin(timestamps, data[time_coord].values)]
 
     return valid_steps
 
@@ -606,7 +606,8 @@ class tc_track:
 
             # Check to see if file exists for UID, if not, create it
             self.filepath = os.path.join(
-                kwargs.get("filepath", os.path.join(repo_path, "data")), str(self.season)
+                kwargs.get("filepath", os.path.join(repo_path, "data")),
+                str(self.season),
             )
 
             if not os.path.exists(self.filepath):
@@ -1050,10 +1051,13 @@ class tc_track:
                 # Check if the target dataset exists. If it does, and the
                 # overwrite argument isn't in the kwargs, skip the processing
                 if os.path.exists(
-                    self.filepath + f"{self.uid}.AI.{data_collection.ai_model}.nc"
-                ) and not kwargs.get("overwrite", False):
+                    os.path.join(
+                        self.filepath, f"{self.uid}.AI.{data_collection.ai_model}.nc"
+                    )
+                ) and (not kwargs.get("overwrite", False)):
                     print(
-                        f"{self.uid} already processed for {data_collection.ai_model}. Skipping..."
+                        f"{self.uid} already processed for {data_collection.ai_model}. Skipping...",
+                        flush=True,
                     )
                     return
 
@@ -1191,9 +1195,11 @@ class tc_track:
                         }
 
                 # Save the final dataset to disk
-                print(f"Saving {str(self)}...", flush=True)
+                print(f"Saving {str(self)} to {self.filepath}...", flush=True)
                 filtered_ds.to_netcdf(
-                    self.filepath + f"{self.uid}.AI.{data_collection.ai_model}.nc",
+                    os.path.join(
+                        self.filepath, f"{self.uid}.AI.{data_collection.ai_model}.nc"
+                    ),
                     mode="w",
                     compute=True,
                     # encoding=encoding,
@@ -1352,7 +1358,6 @@ class tc_track:
             delattr(self, f"{ds_type}_ds")
             gc.collect()
 
-    # Function to load the data from storage
     def load_data(self, **kwargs):
         """
         Function to load the data from storage
@@ -1385,6 +1390,138 @@ class tc_track:
                     'You can create the dataset by running the "process_data_collection" method'
                     " with a data collection object as an argument."
                 )
+
+    def load_ai_data(self, **kwargs):
+        """
+        Function to load the AI data from storage
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+
+        """
+        ai_model = kwargs.get("ai_model", "panguweather")
+        print(f"Loading {ai_model} forecast data for {self.uid}...")
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, "AI_ds"):
+            # Check if the dataset exists on disk
+            path = os.path.join(self.filepath, f"{self.uid}.AI.{ai_model}.nc")
+            if os.path.exists(path):
+                # If it does, load the dataset
+                # print("Loading dataset...")
+                setattr(self, "AI_ds", xr.open_dataset(path))
+            else:
+                print(f"Dataset {self.uid}.AI.{ai_model}.nc not found on disk")
+                print(
+                    'You can create the dataset by running the "process_data_collection" method'
+                    " with an AI data collection object as an argument."
+                )
+
+    def serve_ai_data(self, **kwargs):
+        ground_truth = kwargs.get("ground_truth", ["wind", "pressure"])
+        ai_model = kwargs.get("ai_model", "panguweather")
+        # Check if the dataset doesn't exist in the object
+
+        if not hasattr(self, "AI_ds"):
+            # if it doesnt, try loading it
+            self.load_ai_data(**kwargs)
+
+        assert hasattr(
+            self, "AI_ds"
+        ), f"AI dataset not found for {self.uid} with model {ai_model}"
+
+        lat_coord, lon_coord, time_coord, level_coord, leadtime_coord = get_coord_vars(
+            self.AI_ds
+        )
+
+        # Get ground truth and valid timestamps
+        gt, stamps = self.get_ground_truth(**kwargs)
+
+        valid_stamps = sanitize_timestamps(stamps, self.AI_ds, time_coord)
+
+        gt = gt[np.isin(stamps, valid_stamps)]
+        stamps = stamps[np.isin(stamps, valid_stamps)]
+
+        ##TODO: fix so that the AI data is selected by the lead time timestamp
+        ## and this is matched to the ground truth timestamp, then a new target
+        # array is appendded with the approrpiate GT value
+
+        # Get the AI data
+        inputs = None
+        targets = None
+        outstamps = None
+        for stamp in stamps:
+            temp_ds = self.AI_ds.sel({time_coord: stamp})
+            temp_ds = temp_ds.where(~temp_ds.isnull(), drop=True)
+
+            timedeltas = temp_ds[leadtime_coord].values.astype("timedelta64[h]")
+            leadtimes = stamp + timedeltas
+
+            # make a boolean index to see what leadtime data we have a
+            # truth value for
+            bool_idx = np.isin(leadtimes, stamps)
+
+            out_data = temp_ds.isel({leadtime_coord: bool_idx}).to_array().values
+            out_data = np.moveaxis(out_data, 0, 1)
+
+            out_targets = gt[np.isin(stamps, leadtimes[bool_idx])]
+
+            if outstamps is None:
+                outstamps = leadtimes[bool_idx]
+                inputs = out_data
+                targets = out_targets
+            else:
+                outstamps = np.hstack([outstamps, leadtimes])
+                inputs = np.vstack([inputs, out_data])
+                targets = np.vstack([targets, out_targets])
+
+        return inputs, targets, outstamps
+
+        #     if inputs is None:
+        #         inputs = temp_ds.to_array().values
+        #     else:
+        #         inputs = np.vstack([inputs, temp_ds.to_array().values])
+        # return inputs, gt, stamps
+
+    def get_ground_truth(self, **kwargs):
+        ground_truth = kwargs.get("ground_truth", ["wind", "pressure"])
+
+        # check that the ground truth is a list, and if it is
+        # that the list only includes elements from "WIND", "PRES",
+        # and "TRACK"
+        assert isinstance(
+            ground_truth, list
+        ), f"Invalid ground truth type {type(ground_truth)}. Expected list"
+        assert all(
+            [gt in ["wind", "pressure", "track"] for gt in ground_truth]
+        ), f"Invalid ground truth elements {ground_truth}. Expected ['wind', 'pressure', 'track']"
+
+        gt_arrays = []
+        for gt in ground_truth:
+            if gt == "wind":
+                gt_arrays.append(self.wind)
+            elif gt == "pressure":
+                gt_arrays.append(self.pressure)
+            elif gt == "track":
+                gt_arrays.append(self.track[:, 0])
+                gt_arrays.append(self.track[:, 1])
+
+        gt_array = np.stack(gt_arrays, axis=1)
+        gt_array = np.char.strip(gt_array.astype(str))
+
+        # load the timestamps so we know which steps we're
+        # interested in postprocessing
+        timestamps = self.timestamps
+
+        # if any row has a "" value, remove it
+        timestamps = timestamps[~np.any(gt_array == "", axis=1)]
+        gt_array = gt_array[~np.any(gt_array == "", axis=1)].astype(float)
+
+        return gt_array, timestamps
 
     def plot_track(self, **kwargs):
         """

@@ -37,6 +37,8 @@ track = toolbox.tc_track(
     ALT_ID=storm[constants.ibtracs_cols._track_cols__metadata.get("ALT_ID")].iloc[0],
     wind=storm[constants.ibtracs_cols._track_cols__metadata.get("WIND")].to_numpy(),
     pres=storm[constants.ibtracs_cols._track_cols__metadata.get("PRES")].to_numpy(),
+    filepath="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+    storm_season=storm.SEASON.iloc[0],
 )
 # %%
 data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
@@ -74,7 +76,7 @@ save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data
 # tst = track.process_data_collection(dc)
 
 # track.load_data(ds_type="rect")
-track.load_timeseries()
+# track.load_timeseries()
 
 # # %%
 # wind_speed = (track.rect_ds.u**2 + track.rect_ds.v**2) ** 0.5

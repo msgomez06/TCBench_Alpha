@@ -37,7 +37,7 @@ track = toolbox.tc_track(
     ALT_ID=storm[constants.ibtracs_cols._track_cols__metadata.get("ALT_ID")].iloc[0],
     wind=storm[constants.ibtracs_cols._track_cols__metadata.get("WIND")].to_numpy(),
     pres=storm[constants.ibtracs_cols._track_cols__metadata.get("PRES")].to_numpy(),
-    filepath="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+    datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
     storm_season=storm.SEASON.iloc[0],
 )
 # %%
@@ -222,33 +222,10 @@ save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data
 # # %%
 
 # %%
-# import xarray as xr
-# import numpy as np
-# import matplotlib.pyplot as plt
-# from mpl_toolkits.axes_grid1 import make_axes_locatable
-# ds = xr.open_dataset('/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/2020233N14313.AI.panguweather.nc')
-
-
-# for idx in range(ds.leadtime_hours.size):
-#     plt.rcParams['font.size'] = 16
-#     test = ds.isel({'time':10, 'leadtime_hours':idx})
-#     wind=((test.u10 **2 + test.v10**2)**.5)
-#     wind.attrs = {'long_name':'10m Wind Magnitude', 'units':'m s**-1'}
-#     wind = wind.where(~wind.isnull(), drop=True)
-#     fig,ax = plt.subplots(dpi=300, figsize=(8,8))
-#     ax.set_aspect(1)
-#     im = wind.plot.imshow(cmap='magma', ax=ax, add_colorbar=False)
-
-#     # Create a divider for the existing axes instance
-#     divider = make_axes_locatable(ax)
-
-#     # Append axes to the right of ax, with 5% width of ax
-#     cax = divider.append_axes("right", size="5%", pad=0.1)
-
-#     # Create colorbar in the appended axes
-#     # Tick locations can be set with the `ticks` keyword
-#     fig.colorbar(im, cax=cax, label=f"{wind.attrs['long_name']} ({wind.attrs['units']}")
-
-#     ax.set_title(f"Date:{wind.time.dt.strftime('%y.%m.%d-%H:00').values.item()} Lead: {wind.leadtime_hours.values.item()}h")
-#     fig.savefig(f"Laura {wind.time.dt.strftime('%y.%m.%d-%Hh00').values.item()}_{wind.leadtime_hours.values.item()}h.png", transparent=True)
-#     plt.close()
+out_test = track.serve_ai_data()
+inputs = out_test[0]
+# %%
+for i in range(5):
+    plt.imshow(inputs[100, i])
+    plt.show()
+# %%

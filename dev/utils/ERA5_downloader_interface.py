@@ -31,9 +31,6 @@ folder_path = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
 client = cdsapi.Client(timeout=86000, quiet=False, sleep_max=900, retry_max=1000)
 
 
-# Single Pressure
-data_origin = "reanalysis-era5-pressure-levels"
-
 datavars = [
     args.datavar,
 ]
@@ -379,7 +376,7 @@ else:
 if not os.path.exists(directory_path):
     os.makedirs(directory_path)
 
-filename = f"ERA5_{args.year}-{args.month}_{args.datavar}.nc"
+filename = f"ERA5_{args.year}-{args.month:02d}_{args.datavar}.nc"
 target_path = os.path.join(directory_path, filename)
 if os.path.exists(target_path):
     print(f"File {filename} already exists")
@@ -402,7 +399,10 @@ data_params = {
 }
 
 if args.datavar in pressure_level_vars:
+    data_origin = "reanalysis-era5-pressure-levels"
     data_params["pressure_level"] = full_pressure
+else:
+    data_origin = "reanalysis-era5-single-levels"
 
 # print(data_origin, data_params, target_path)
 client.retrieve(name=data_origin, request=data_params, target=target_path)

@@ -4,6 +4,8 @@ import os
 import sys
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import numpy as np
+import dask.array as da
 
 # Backend Libraries
 import joblib as jl
@@ -14,8 +16,8 @@ from utils import data_lib as dlib
 # %% Load the seasons to process
 
 seasons = toolbox.get_TC_seasons(
-    season_list=[2020],
-    filepath="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+    season_list=[*range(2016, 2023)],
+    datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
 )
 
 # %%
@@ -27,6 +29,8 @@ process = False
 
 # %%
 # Process the tracks
+input_samples = None
+target_samples = None
 for season, storms in seasons.items():
     print(f"Starting to process {season}. which contains {len(storms)} storms...")
 
@@ -39,12 +43,21 @@ for season, storms in seasons.items():
             jl.delayed(storm.process_data_collection)(dc) for storm in storms
         )
     else:
-        input_samples = []
-        target_samples = []
         for storm in storms:
-            inputs, outputs, _ = storm.serve_ai_data()
-            input_samples.append(inputs)
-            target_samples.append(outputs)
+            inputs = None
+            outputs = None
+            try:
+                inputs, outputs, t, leads = storm.serve_ai_data()
+            except Exception as e:
+                print(f"Failed to process {str(storm)}")
+                print(f"Error: {e}")
+            if inputs is not None and outputs is not None:
+                if input_samples is None:
+                    input_samples = inputs
+                    target_samples = outputs
+                else:
+                    input_samples = da.vstack((input_samples, inputs))
+                    target_samples = da.vstack((target_samples, outputs))
 
 
 # %%

@@ -34,6 +34,8 @@ import matplotlib as mpl
 from matplotlib.animation import FuncAnimation
 from memory_profiler import profile
 from datetime import datetime
+import dask.array as da
+import pickle
 
 # TCBench Libraries
 try:
@@ -373,6 +375,194 @@ def get_TC_seasons(
     return season_dict
 
 
+def get_sets(splits: dict, **kwargs):
+    """
+    Function to retrieve the training, validation, and testing set for TC tracks.
+    The function will return a list of TC_tracks and a dictionary with the information
+    retrieved by the serving function. By default we will assume we will be working
+    with AI_data
+
+    inputs:
+        splits: dict, required
+            Dictionary containing the split information for the data. The dictionary
+            should contain the following keys:
+                - train
+                - val (optional)
+                - test
+            Each key should contain a list of floats corresponding to the relative size
+            between the splits.
+            If the test_strategy is 'custom', the test split should contain a list of
+            storm seasons to use for the test set.
+        test_strategy: STR, optional
+            Strategy to use for the test set. The default is 'last', which will leave
+            the most recent storm seasons for the test set. Other options include:
+                - 'random': Randomly select the test set
+                - 'first': Leave the first storm seasons for the test set
+                - 'custom': Use a custom list of storm seasons for the test set
+
+    outputs:
+        sets: dict
+            Dictionary containing the sets of storm seasons for training, validation, and
+            testing
+        data: dict
+            Dictionary containing the AI data for each set
+            Keys: 'train', 'val', 'test'
+
+    parameters:
+        datadir: STR, optional
+            Path to the directory containing the storm data. The default is
+            os.path.join(repo_path, 'data')
+        debug: BOOL, optional
+            Flag to print out debugging information. The default is False
+        verbose: Bool, optional
+            Flag to print out verbose information. The default is False
+    """
+
+    assert isinstance(
+        splits, dict
+    ), f"Invalid type for splits: {type(splits)}. Expected dict"
+
+    assert np.all(
+        [key in ["train", "test", "validation"] for key in splits.keys()]
+    ), "Invalid split values. Unknown key in splits dictionary; expected 'train', 'test', and 'validation' keys"
+
+    datadir = kwargs.get("datadir", os.path.join(repo_path, "data"))
+
+    # get the folders in datadir and filter out the ones that are not storm seasons
+    season_folders = [folder for folder in os.listdir(datadir) if folder.isdigit()]
+    season_folders = list(np.sort(np.array(season_folders).astype(int)))
+
+    test_strategy = kwargs.get("test_strategy", "last")
+    if test_strategy in ["last", "random", "first"]:
+        train_set = None
+        val_set = None
+        test_set = None
+        assert (np.sum([value for value in splits.values()]) <= 1) and (
+            np.all([value > 0 for value in splits.values()])
+        ), (
+            "Invalid split values. Sum of splits should be less than "
+            "or equal to 1, and all splits must be greater than 0"
+        )
+        if test_strategy == "last":
+            test_size = int(np.ceil(splits["test"] * len(season_folders)))
+            test_set = season_folders[-test_size:]
+            other_folders = season_folders[:-test_size]
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(season_folders)))
+                val_set = other_folders[-val_size:]
+                train_set = other_folders[:-val_size]
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(season_folders)))
+                    val_set = other_folders[-val_size:]
+                    train_set = other_folders[:-val_size]
+                else:
+                    train_set = other_folders
+        elif test_strategy == "random":
+            test_size = int(np.ceil(splits["test"] * len(season_folders)))
+            test_set = np.random.choice(season_folders, test_size, replace=False)
+            other_folders = np.setdiff1d(season_folders, test_set)
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(season_folders)))
+                val_set = np.random.choice(other_folders, val_size, replace=False)
+                train_set = np.setdiff1d(other_folders, val_set)
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(season_folders)))
+                    val_set = np.random.choice(other_folders, val_size, replace=False)
+                    train_set = np.setdiff1d(other_folders, val_set)
+                else:
+                    train_set = other_folders
+        elif test_strategy == "first":
+            test_size = int(np.ceil(splits["test"] * len(season_folders)))
+            test_set = season_folders[:test_size]
+            other_folders = season_folders[test_size:]
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(season_folders)))
+                val_set = other_folders[:val_size]
+                train_set = other_folders[val_size:]
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(season_folders)))
+                    val_set = other_folders[:val_size]
+                    train_set = other_folders[val_size:]
+                else:
+                    train_set = other_folders
+
+        sets = {
+            "train": get_TC_seasons(season_list=train_set, datadir_path=datadir),
+            "test": get_TC_seasons(season_list=test_set, datadir_path=datadir),
+        }
+        if val_set is not None:
+            sets["validation"] = get_TC_seasons(
+                season_list=val_set, datadir_path=datadir
+            )
+    elif test_strategy == "custom":
+        raise NotImplementedError("Custom test set strategy not yet implemented")
+    else:
+        raise ValueError(f"Unsupported test strategy {test_strategy}")
+
+    data = {}
+    for key, data_set in sets.items():
+        if isinstance(data_set, dict):
+            input_data = None
+            target_data = None
+            t_data = None
+            lead_data = None
+
+            ##TODO: Parallelize this
+            for season, storms in data_set.items():
+                if kwargs.get("progress_indicator", True):
+                    print(f"Processing {season}", end="", flush=True)
+                for idx, storm in enumerate(storms):
+                    if kwargs.get("progress_indicator", True) and (idx // 10 == 0):
+                        print(".", end="", flush=True)
+                    inputs = None
+                    outputs = None
+                    try:
+                        inputs, outputs, t, leads = storm.serve_ai_data()
+                    except Exception as e:
+                        if kwargs.get("debug", False):
+                            print(f"Failed to process {str(storm)}")
+                            print(f"Error: {e}")
+                    if (inputs is not None) and (outputs is not None):
+                        if input_data is None:
+                            input_data = inputs
+                            target_data = outputs
+                            t_data = t
+                            lead_data = leads
+                        else:
+                            input_data = da.vstack((input_data, inputs))
+                            target_data = da.vstack((target_data, outputs))
+                            t_data = np.hstack((t_data, t))
+                            lead_data = np.hstack((lead_data, leads))
+                if kwargs.get("progress_indicator", True):
+                    print(" Done!", flush=True)
+            data[key] = {
+                "inputs": input_data,
+                "outputs": target_data,
+                "time": t_data,
+                "leadtime": lead_data,
+            }
+
+    return sets, data
+
+
 # %% Data Processing / Preprocessing Library
 """
 This cell contains the following classes and functions:
@@ -603,10 +793,12 @@ class tc_track:
             self.season = kwargs.get("storm_season", None)
             # Add alternate ID if available
             self.ALT_ID = kwargs.get("ALT_ID", None)
-
+            self.datadir_path = kwargs.get(
+                "datadir_path", os.path.join(repo_path, "data")
+            )
             # Check to see if file exists for UID, if not, create it
             self.filepath = os.path.join(
-                kwargs.get("filepath", os.path.join(repo_path, "data")),
+                self.datadir_path,
                 str(self.season),
             )
 
@@ -1385,11 +1577,12 @@ class tc_track:
                     xr.open_dataset(self.filepath + f"{self.uid}.{ds_type}.nc"),
                 )
             else:
-                print(f"Dataset {self.uid}.{ds_type}.nc not found on disk")
-                print(
-                    'You can create the dataset by running the "process_data_collection" method'
-                    " with a data collection object as an argument."
-                )
+                if kwargs.get("verbose", False) or kwargs.get("debug", False):
+                    print(f"Dataset {self.uid}.{ds_type}.nc not found on disk")
+                    print(
+                        'You can create the dataset by running the "process_data_collection" method'
+                        " with a data collection object as an argument."
+                    )
 
     def load_ai_data(self, **kwargs):
         """
@@ -1405,7 +1598,8 @@ class tc_track:
 
         """
         ai_model = kwargs.get("ai_model", "panguweather")
-        print(f"Loading {ai_model} forecast data for {self.uid}...")
+        if kwargs.get("verbose", False):
+            print(f"Loading {ai_model} forecast data for {self.uid}...")
         # Check if the dataset doesn't exist in the object
         if not hasattr(self, "AI_ds"):
             # Check if the dataset exists on disk
@@ -1415,14 +1609,76 @@ class tc_track:
                 # print("Loading dataset...")
                 setattr(self, "AI_ds", xr.open_dataset(path))
             else:
-                print(f"Dataset {self.uid}.AI.{ai_model}.nc not found on disk")
-                print(
-                    'You can create the dataset by running the "process_data_collection" method'
-                    " with an AI data collection object as an argument."
-                )
+                if kwargs.get("verbose", False) or kwargs.get("debug", False):
+                    print(f"Dataset {self.uid}.AI.{ai_model}.nc not found on disk")
+                    print(
+                        'You can create the dataset by running the "process_data_collection" method'
+                        " with an AI data collection object as an argument."
+                    )
 
     def serve_ai_data(self, **kwargs):
-        ground_truth = kwargs.get("ground_truth", ["wind", "pressure"])
+
+        # check if the cache dir exists
+        cache_dtype = kwargs.get("cache_dtype", float)
+        cache_dir = kwargs.get("cache_dir", os.path.join(self.datadir_path, "cache"))
+        load_from_cache = kwargs.get("use_cached", True)
+
+        if os.path.exists(cache_dir) and load_from_cache:
+            try:
+                # check if the cache files exist. If they don't exist, continue
+                if not all(
+                    [
+                        os.path.exists(
+                            os.path.join(cache_dir, f"{self.uid}_{file}.npy")
+                        )
+                        for file in ["X", "Y", "t", "leads"]
+                    ]
+                    # + [
+                    #     os.path.exists(
+                    #         os.path.join(cache_dir, f"{self.uid}_shapes.pkl")
+                    #     )
+                    # ]
+                ):
+                    raise FileNotFoundError(
+                        "Cache files not found. Rebuilding cache..."
+                    )
+
+                # load the shapes
+                with open(os.path.join(cache_dir, f"{self.uid}_shapes.pkl"), "rb") as f:
+                    X_shape, Y_shape, t_shape, leads_shape = pickle.load(f)
+
+                # load the files into dask arrays
+                X = da.from_array(
+                    np.load(os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r")
+                )
+                Y = da.from_array(
+                    np.load(os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r")
+                )
+                t = da.from_array(
+                    np.load(os.path.join(cache_dir, f"{self.uid}_t.npy"), mmap_mode="r")
+                )
+                leads = da.from_array(
+                    np.load(
+                        os.path.join(cache_dir, f"{self.uid}_leads.npy"), mmap_mode="r"
+                    )
+                )
+                if kwargs.get("verbose", False):
+                    print(
+                        f"Succesfully loaded cache files for {self.uid} from cache...",
+                        flush=True,
+                    )
+
+                return X, Y, t, leads
+            except Exception as e:
+                if kwargs.get("debug", False):
+                    print(
+                        f"Error loading cache files for {self.uid}. Rebuilding cache..."
+                    )
+                    if kwargs.get("verbose", False):
+                        print(e)
+        else:
+            os.makedirs(cache_dir)
+
         ai_model = kwargs.get("ai_model", "panguweather")
         # Check if the dataset doesn't exist in the object
 
@@ -1446,15 +1702,20 @@ class tc_track:
         gt = gt[np.isin(stamps, valid_stamps)]
         stamps = stamps[np.isin(stamps, valid_stamps)]
 
-        ##TODO: fix so that the AI data is selected by the lead time timestamp
-        ## and this is matched to the ground truth timestamp, then a new target
-        # array is appendded with the approrpiate GT value
+        if len(gt) == 0:
+            if kwargs.get("verbose", False) or kwargs.get("debug", False):
+                print(f"No valid timestamps found for {self.uid} with model {ai_model}")
+            return
+
+        ##TODO: Implement hard drive caching for the AI data
 
         # Get the AI data
         inputs = None
         targets = None
         outstamps = None
+        out_leads = None
         for stamp in stamps:
+
             temp_ds = self.AI_ds.sel({time_coord: stamp})
             temp_ds = temp_ds.where(~temp_ds.isnull(), drop=True)
 
@@ -1467,25 +1728,65 @@ class tc_track:
 
             out_data = temp_ds.isel({leadtime_coord: bool_idx}).to_array().values
             out_data = np.moveaxis(out_data, 0, 1)
-
             out_targets = gt[np.isin(stamps, leadtimes[bool_idx])]
+            base_targets = gt[stamps == stamp]
 
             if outstamps is None:
-                outstamps = leadtimes[bool_idx]
-                inputs = out_data
-                targets = out_targets
+                try:
+                    if out_data.shape[-2:] != (
+                        241,
+                        241,
+                    ):
+                        raise ValueError(
+                            f"Invalid shape for stamp {stamp}... Skipping..."
+                        )
+
+                    outstamps = leadtimes[bool_idx]
+                    base_stamps = np.full_like(outstamps, stamp)
+
+                    out_leads = temp_ds[leadtime_coord].values[bool_idx]
+                    inputs = out_data
+                    targets = out_targets
+                except ValueError as e:
+                    if kwargs.get("verbose", False):
+                        print(f"Problem processing {stamp}... Skipping...")
+                        print(e)
             else:
-                outstamps = np.hstack([outstamps, leadtimes])
-                inputs = np.vstack([inputs, out_data])
-                targets = np.vstack([targets, out_targets])
+                try:
+                    outstamps = np.hstack([outstamps, leadtimes[bool_idx]])
+                    out_leads = np.hstack(
+                        [out_leads, temp_ds[leadtime_coord].values[bool_idx]]
+                    )
+                    inputs = np.vstack([inputs, out_data])
+                    targets = np.vstack([targets, out_targets])
+                except ValueError as e:
+                    if kwargs.get("verbose", False):
+                        print(f"Problem processing {stamp}... Skipping...")
+                        print(e)
 
-        return inputs, targets, outstamps
+        # save if the data is not empty
+        if inputs is not None:
+            # save the data to the cache
+            np.save(os.path.join(cache_dir, f"{self.uid}_X.npy"), inputs)
+            np.save(os.path.join(cache_dir, f"{self.uid}_Y.npy"), targets)
+            np.save(os.path.join(cache_dir, f"{self.uid}_t.npy"), outstamps)
+            np.save(os.path.join(cache_dir, f"{self.uid}_leads.npy"), out_leads)
 
-        #     if inputs is None:
-        #         inputs = temp_ds.to_array().values
-        #     else:
-        #         inputs = np.vstack([inputs, temp_ds.to_array().values])
-        # return inputs, gt, stamps
+            # load saved files into dask arrays
+            X = da.from_array(
+                np.load(os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r")
+            )
+            Y = da.from_array(
+                np.load(os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r")
+            )
+            t = da.from_array(
+                np.load(os.path.join(cache_dir, f"{self.uid}_t.npy"), mmap_mode="r")
+            )
+            leads = da.from_array(
+                np.load(os.path.join(cache_dir, f"{self.uid}_leads.npy"), mmap_mode="r")
+            )
+
+            return X, Y, t, leads
 
     def get_ground_truth(self, **kwargs):
         ground_truth = kwargs.get("ground_truth", ["wind", "pressure"])
@@ -1884,5 +2185,13 @@ class tc_track:
         fig.tight_layout()
         plt.show()
 
+
+# %%
+if __name__ == "__main__":
+    sets, data = get_sets(
+        {"train": 0.6, "test": 0.2},
+        datadir="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+    )
+    input_means = data["train"]["inputs"].mean(axis=(0, -1, -2)).compute()
 
 # %%

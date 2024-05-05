@@ -17,14 +17,12 @@ from utils import data_lib as dlib
 
 seasons = toolbox.get_TC_seasons(
     season_list=[*range(2016, 2023)],
-    datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+    # datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+    datadir_path="/media/mgomezd1/My Passport/TCBench",
+    tracks_path="/home/mgomezd1/repos/tcbench_alpha/tracks/ibtracs/",
 )
 
 # %%
-# Load the data collection
-data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/AI-milton/panguweather"
-dc = dlib.AI_Data_Collection(data_dir)
-
 process = False
 
 # %%
@@ -35,6 +33,12 @@ for season, storms in seasons.items():
     print(f"Starting to process {season}. which contains {len(storms)} storms...")
 
     if process:
+        # Load the data collection
+        data_dir = (
+            "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/AI-milton/panguweather"
+        )
+        dc = dlib.AI_Data_Collection(data_dir)
+
         # determine the number of processors that can be used
         n_jobs = jl.cpu_count()
 

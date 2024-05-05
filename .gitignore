@@ -9,3 +9,4 @@ environment.yml
 dev/slurm/
 dev/slurm/*
 dev/utils/__pycache__/*
+/tracks/*

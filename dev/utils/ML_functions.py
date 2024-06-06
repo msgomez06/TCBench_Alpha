@@ -13,12 +13,17 @@ used in other scripts to perform the data tasks associated with TCBench
 import dask.array as da
 from dask_ml import preprocessing
 import numpy as np
+import torch
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 
 
 # %% Classes
 ## TODO: Add docstrings, add type hints, add error handling
 ## TODO: add logging
 ## TODO: implement other scaling methods (e.g., min-max)
+
+
 class AI_StandardScaler(preprocessing.StandardScaler):
     # The fit function should expect dask arrays
     def fit(self, X, y=None):
@@ -32,4 +37,19 @@ class AI_StandardScaler(preprocessing.StandardScaler):
         return self
 
 
-# %%
+class DaskDataset(Dataset):
+    def __init__(self, dask_array):
+        self.dask_array = dask_array
+
+    def __len__(self):
+        return len(self.dask_array)
+
+    def __getitem__(self, idx):
+        sample = self.dask_array[idx].compute()
+        return torch.from_numpy(sample)
+
+
+# %% Functions
+def make_dataloader(dask_array, **kwargs):
+    dataset = DaskDataset(dask_array)
+    return DataLoader(dataset, **kwargs)

@@ -21,7 +21,8 @@ import gc
 import pandas as pd
 import numpy as np
 import xarray as xr
-import xesmf as xe
+
+# import xesmf as xe
 import joblib as jl
 import cartopy.crs as ccrs
 import cartopy.feature
@@ -46,10 +47,52 @@ except:
 # Retrieve Repository Path
 repo_path = "/" + os.path.join(*os.getcwd().split("/")[:-1])
 
-print(repo_path)
+# print(repo_path)
 
 
 # %% Auxilliary Functions
+def plot_facecolors(**kwargs):
+    figcolor = kwargs.get("figcolor", np.array([1, 21, 38]) / 255)
+    axcolor = kwargs.get("axcolor", np.array([141, 166, 166]) / 255)
+    textcolor = kwargs.get("textcolor", np.array([242, 240, 228]) / 255)
+
+    if kwargs.get("fig", None) is not None:
+        fig = kwargs.get("fig")
+        # Change the facecolor of the figure
+        fig.set_facecolor(figcolor)
+
+    if kwargs.get("axes", None) is not None:
+        if isinstance(kwargs.get("axes"), np.ndarray):
+            axes = kwargs.get("axes")
+        elif isinstance(kwargs.get("axes"), plt.Axes):
+            axes = np.array([kwargs.get("axes")])
+        else:
+            raise ValueError(
+                f"Invalid type for axes: {type(kwargs.get('axes'))}. Expected np.ndarray or plt.Axes"
+            )
+
+        # Change the facecolor of the axes
+        for ax in axes.flatten():
+            ax.set_facecolor(axcolor)
+
+        # Change the color of the title
+        for ax in axes.flatten():
+            title = ax.get_title()
+            ax.set_title(title, color=textcolor)
+
+        # Change the color of the x and y axis labels
+        for ax in axes.flatten():
+            ax.xaxis.label.set_color(textcolor)
+            ax.yaxis.label.set_color(textcolor)
+
+        # Change the color of the tick labels
+        for ax in axes.flatten():
+            for label in ax.get_xticklabels():
+                label.set_color(textcolor)
+            for label in ax.get_yticklabels():
+                label.set_color(textcolor)
+
+
 def axis_generator(**kwargs):
     origin = kwargs.get("origin", (0, 0))
     resolution = kwargs.get("resolution", 0.25)
@@ -513,7 +556,21 @@ def get_sets(splits: dict, **kwargs):
                 season_list=val_set, datadir_path=datadir
             )
     elif test_strategy == "custom":
-        raise NotImplementedError("Custom test set strategy not yet implemented")
+        sets = {}
+        for key, item in splits.items():
+            assert isinstance(
+                item, list
+            ), f"Invalid type for {key} in splits: {type(item)}. Expected list."
+            assert np.all(
+                [isinstance(value, int) for value in item]
+            ), f"Invalid type for values in {key} in splits: {type(item)}. Expected int."
+            assert np.all(
+                [value in season_folders for value in item]
+            ), f"Invalid values for {key} in splits: {item}. Season not found in datadir."
+            assert key in ["train", "test", "validation"], "Unsupported key in splits."
+            assert len(item) > 0, f"Empty list for {key} in splits."
+            sets[key] = get_TC_seasons(season_list=item, datadir_path=datadir)
+
     else:
         raise ValueError(f"Unsupported test strategy {test_strategy}")
 
@@ -525,40 +582,117 @@ def get_sets(splits: dict, **kwargs):
             t_data = None
             lead_data = None
 
-            ##TODO: Parallelize this
-            for season, storms in data_set.items():
-                if kwargs.get("progress_indicator", True):
-                    print(f"Processing {season}", end="", flush=True)
-                for idx, storm in enumerate(storms):
-                    if kwargs.get("progress_indicator", True) and (idx // 10 == 0):
-                        print(".", end="", flush=True)
-                    inputs = None
-                    outputs = None
-                    try:
-                        inputs, outputs, t, leads = storm.serve_ai_data()
-                    except Exception as e:
-                        if kwargs.get("debug", False):
-                            print(f"Failed to process {str(storm)}")
-                            print(f"Error: {e}")
-                    if (inputs is not None) and (outputs is not None):
+            if kwargs.get("base_intensity", True):
+                intensity = None
+
+            # Parallel processing
+            if kwargs.get("parallel", True):
+                for season, storms in data_set.items():
+                    progress = kwargs.get("progress_indicator", True)
+                    if progress:
+                        print(f"Processing {season}", end="", flush=True)
+
+                        def processor(storm, **kwargs):
+                            result = storm.serve_ai_data(**kwargs)
+
+                            if (
+                                kwargs.get("base_intensity", True)
+                                and result is not None
+                                and result[0].size > 0
+                            ):
+                                _, _, t, leads = result
+                                base_time = t - leads.astype("timedelta64[h]")
+
+                                matches = base_time[:, None] == storm.timestamps
+                                # Use numpy.nonzero to find the indices of the matches
+                                indices = np.nonzero(matches)[1]
+
+                                base_intensity = np.vstack(
+                                    [
+                                        storm.wind[indices].astype(int),
+                                        storm.pressure[indices].astype(int),
+                                    ]
+                                ).T
+
+                                result = (*result, base_intensity)
+
+                                if progress:
+                                    print(".", end="", flush=True)
+
+                                return result
+
+                    temp_data = jl.Parallel(n_jobs=jl.cpu_count())(
+                        jl.delayed(processor)(storm, **kwargs) for storm in storms
+                    )
+                    if progress:
+                        print(" Done!", flush=True)
+
+                    # Remove any empty entries
+                    temp_data = [entry for entry in temp_data if entry is not None]
+
+                    for result in temp_data:
+                        if kwargs.get("base_intensity", True):
+                            inputs, outputs, t, leads, base_intensity = result
+                        else:
+                            inputs, outputs, t, leads = result
+
                         if input_data is None:
                             input_data = inputs
                             target_data = outputs
                             t_data = t
                             lead_data = leads
+                            if kwargs.get("base_intensity", True):
+                                intensity = base_intensity
                         else:
                             input_data = da.vstack((input_data, inputs))
                             target_data = da.vstack((target_data, outputs))
                             t_data = np.hstack((t_data, t))
                             lead_data = np.hstack((lead_data, leads))
-                if kwargs.get("progress_indicator", True):
-                    print(" Done!", flush=True)
+                            if kwargs.get("base_intensity", True):
+                                intensity = da.vstack((intensity, base_intensity))
+
+            # Serial processing
+            else:
+                if kwargs.get("base_intensity", True):
+                    raise NotImplementedError(
+                        "Base intensity calculation not implemented for serial processing"
+                    )
+                for season, storms in data_set.items():
+                    if kwargs.get("progress_indicator", True):
+                        print(f"Processing {season}", end="", flush=True)
+                    for idx, storm in enumerate(storms):
+                        if kwargs.get("progress_indicator", True) and (idx // 10 == 0):
+                            print(".", end="", flush=True)
+                        inputs = None
+                        outputs = None
+                        try:
+                            inputs, outputs, t, leads = storm.serve_ai_data(**kwargs)
+                        except Exception as e:
+                            if kwargs.get("debug", False):
+                                print(f"Failed to process {str(storm)}")
+                                print(f"Error: {e}")
+                        if (inputs is not None) and (outputs is not None):
+                            if input_data is None:
+                                input_data = inputs
+                                target_data = outputs
+                                t_data = t
+                                lead_data = leads
+                            else:
+                                input_data = da.vstack((input_data, inputs))
+                                target_data = da.vstack((target_data, outputs))
+                                t_data = np.hstack((t_data, t))
+                                lead_data = np.hstack((lead_data, leads))
+                    if kwargs.get("progress_indicator", True):
+                        print(" Done!", flush=True)
+
             data[key] = {
                 "inputs": input_data,
                 "outputs": target_data,
                 "time": t_data,
                 "leadtime": lead_data,
             }
+            if kwargs.get("base_intensity", True):
+                data[key]["base_intensity"] = intensity
 
     return sets, data
 
@@ -723,38 +857,38 @@ def sanitize_timestamps(timestamps, data, time_coord="time"):
     return valid_steps
 
 
-def get_regrider(dataset: xr.Dataset, lat_coord: str, lon_coord: str, **kwargs):
-    # Generate lat and lot vectors
-    lat_vector, lon_vector = axis_generator(**kwargs)
+# def get_regrider(dataset: xr.Dataset, lat_coord: str, lon_coord: str, **kwargs):
+#     # Generate lat and lot vectors
+#     lat_vector, lon_vector = axis_generator(**kwargs)
 
-    assert (
-        lon_vector.shape <= dataset[lon_coord].shape
-    ), f"Longitude vector is too long. Expected <={dataset[lon_coord].shape} but got {lon_vector.shape}. Downscaling not yet supported."
-    assert (
-        lat_vector.shape <= dataset[lat_coord].shape
-    ), f"Latitude vector is too long. Expected <={dataset[lat_coord].shape} but got {lat_vector.shape}. Downscaling not yet supported."
+#     assert (
+#         lon_vector.shape <= dataset[lon_coord].shape
+#     ), f"Longitude vector is too long. Expected <={dataset[lon_coord].shape} but got {lon_vector.shape}. Downscaling not yet supported."
+#     assert (
+#         lat_vector.shape <= dataset[lat_coord].shape
+#     ), f"Latitude vector is too long. Expected <={dataset[lat_coord].shape} but got {lat_vector.shape}. Downscaling not yet supported."
 
-    # If either the lat or lon vectors are smaller than the dataset, regrid
-    if (
-        lon_vector.shape != dataset[lon_coord].shape
-        or lat_vector.shape != dataset[lat_coord].shape
-    ):
-        print("Making a regridder...")
-        # Generate empty array to cast data with
-        casting_array = xr.DataArray(
-            np.NaN,
-            dims=[lat_coord, lon_coord],
-            coords={lat_coord: lat_vector, lon_coord: lon_vector},
-        )
-        regridder = xe.Regridder(
-            dataset,
-            casting_array,
-            "bilinear",
-        )
+#     # If either the lat or lon vectors are smaller than the dataset, regrid
+#     if (
+#         lon_vector.shape != dataset[lon_coord].shape
+#         or lat_vector.shape != dataset[lat_coord].shape
+#     ):
+#         print("Making a regridder...")
+#         # Generate empty array to cast data with
+#         casting_array = xr.DataArray(
+#             np.NaN,
+#             dims=[lat_coord, lon_coord],
+#             coords={lat_coord: lat_vector, lon_coord: lon_vector},
+#         )
+#         regridder = xe.Regridder(
+#             dataset,
+#             casting_array,
+#             "bilinear",
+#         )
 
-        return regridder(dataset)
-    else:
-        return None
+#         return regridder(dataset)
+#     else:
+#         return None
 
 
 # %%
@@ -765,6 +899,9 @@ def get_regrider(dataset: xr.Dataset, lat_coord: str, lon_coord: str, **kwargs):
 class tc_track:
     def __str__(self):
         return f"TCBench_track_{self.uid}: {self.name}"
+
+    def __repr__(self):
+        return f"TCBench TC track Object; UID-{self.uid}  Name-{self.name}"
 
     def __init__(self, UID, NAME, track, timestamps, **kwargs) -> None:
         try:
@@ -1312,11 +1449,12 @@ class tc_track:
                             type(level) == ds[level_coord].dtype
                             and level in ds[level_coord].values
                         ), f"Invalid level {level}. Make sure you select a single level for each data variable."
+
                         # TODO: Add support for multiple levels
                         da = ds[var].sel({level_coord: level})
-                        da.rename(f"{var}_{level}")
-                        da = da.drop(level_coord)
-                        da.attrs.update(attrs)
+                        da = da.rename(f"{var}{level}")
+                        da = da.drop_vars(level_coord)
+                        da.attrs = attrs
                     else:
                         da = ds[var]
                     da_list.append(da)
@@ -1510,7 +1648,7 @@ class tc_track:
             attrs = data.attrs
 
             # Retrieve regridder if necessary
-            regridder = get_regrider(dataset=data, **kwargs)
+            regridder = None  # get_regrider(dataset=data, **kwargs)
 
             if regridder is not None:
                 data = regridder(data)
@@ -1617,37 +1755,187 @@ class tc_track:
                     )
 
     def serve_ai_data(self, **kwargs):
+        try:
+            # check if the cache dir exists
+            cache_dtype = kwargs.get("cache_dtype", float)
+            cache_dir = kwargs.get(
+                "cache_dir", os.path.join(self.datadir_path, "cache")
+            )
+            load_from_cache = kwargs.get("use_cached", True)
+            ai_model = kwargs.get("ai_model", "panguweather")
 
-        # check if the cache dir exists
-        cache_dtype = kwargs.get("cache_dtype", float)
-        cache_dir = kwargs.get("cache_dir", os.path.join(self.datadir_path, "cache"))
-        load_from_cache = kwargs.get("use_cached", True)
-
-        if os.path.exists(cache_dir) and load_from_cache:
-            try:
-                # check if the cache files exist. If they don't exist, continue
-                if not all(
-                    [
-                        os.path.exists(
-                            os.path.join(cache_dir, f"{self.uid}_{file}.npy")
+            if os.path.exists(cache_dir) and load_from_cache:
+                try:
+                    # check if the cache files exist. If they don't exist, continue
+                    if not all(
+                        [
+                            os.path.exists(
+                                os.path.join(cache_dir, f"{self.uid}_{file}.npy")
+                            )
+                            for file in ["X", "Y", "t", "leads"]
+                        ]
+                    ):
+                        raise FileNotFoundError(
+                            "Cache files not found. Rebuilding cache..."
                         )
-                        for file in ["X", "Y", "t", "leads"]
-                    ]
-                    # + [
-                    #     os.path.exists(
-                    #         os.path.join(cache_dir, f"{self.uid}_shapes.pkl")
-                    #     )
-                    # ]
-                ):
-                    raise FileNotFoundError(
-                        "Cache files not found. Rebuilding cache..."
+
+                    # load the files into dask arrays
+                    X = da.from_array(
+                        np.load(
+                            os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"
+                        )
                     )
+                    Y = da.from_array(
+                        np.load(
+                            os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r"
+                        )
+                    )
+                    t = da.from_array(
+                        np.load(
+                            os.path.join(cache_dir, f"{self.uid}_t.npy"), mmap_mode="r"
+                        )
+                    )
+                    leads = da.from_array(
+                        np.load(
+                            os.path.join(cache_dir, f"{self.uid}_leads.npy"),
+                            mmap_mode="r",
+                        )
+                    )
+                    if kwargs.get("verbose", False):
+                        print(
+                            f"Succesfully loaded cache files for {self.uid} from cache...",
+                            flush=True,
+                        )
 
-                # load the shapes
-                with open(os.path.join(cache_dir, f"{self.uid}_shapes.pkl"), "rb") as f:
-                    X_shape, Y_shape, t_shape, leads_shape = pickle.load(f)
+                    return X, Y, t, leads
+                except Exception as e:
+                    if kwargs.get("debug", False):
+                        print(
+                            f"Error loading cache files for {self.uid}. Rebuilding cache..."
+                        )
+                        if kwargs.get("verbose", False):
+                            print(e)
+            else:
+                if not os.path.exists(cache_dir):
+                    os.makedirs(cache_dir)
 
-                # load the files into dask arrays
+            if kwargs.get("verbose", False) and kwargs.get("use_cached", True):
+                print(
+                    f"used_chached disabled or cache files not found for {self.uid}. Rebuilding cache..."
+                )
+
+            # Check if the dataset doesn't exist in the object
+
+            if not hasattr(self, "AI_ds"):
+                # if it doesnt, try loading it
+                self.load_ai_data(**kwargs)
+
+            assert hasattr(
+                self, "AI_ds"
+            ), f"AI dataset not found for {self.uid} with model {ai_model}"
+
+            lat_coord, lon_coord, time_coord, level_coord, leadtime_coord = (
+                get_coord_vars(self.AI_ds)
+            )
+
+            # Get ground truth and valid timestamps
+            gt, stamps = self.get_ground_truth(**kwargs)
+
+            valid_stamps = sanitize_timestamps(stamps, self.AI_ds, time_coord)
+
+            gt = gt[np.isin(stamps, valid_stamps)]
+            stamps = stamps[np.isin(stamps, valid_stamps)]
+
+            if len(gt) == 0:
+                if kwargs.get("verbose", False) or kwargs.get("debug", False):
+                    print(
+                        f"No valid timestamps found for {self.uid} with model {ai_model}"
+                    )
+                return
+
+            # Get the AI data
+            inputs = None
+            targets = None
+            outstamps = None
+            out_leads = None
+            for stamp in stamps:
+
+                temp_ds = self.AI_ds.sel({time_coord: stamp})
+                temp_ds = temp_ds.where(~temp_ds.isnull(), drop=True)
+
+                timedeltas = temp_ds[leadtime_coord].values.astype("timedelta64[h]")
+                leadtimes = stamp + timedeltas
+
+                # make a boolean index to see what leadtime data we have a
+                # truth value for
+                bool_idx = np.isin(leadtimes, stamps)
+
+                out_data = temp_ds.isel({leadtime_coord: bool_idx}).to_array().values
+                out_data = np.moveaxis(out_data, 0, 1)
+                out_targets = gt[np.isin(stamps, leadtimes[bool_idx])]
+                # base_targets = gt[stamps == stamp]
+                temp_stamps = leadtimes[bool_idx]
+                temp_leads = temp_ds.isel({leadtime_coord: bool_idx})[
+                    leadtime_coord
+                ].values
+
+                if outstamps is None:
+                    try:
+                        ##TODO: The following check appears to be and issue
+                        ## with the way the data is being filtered when processing
+                        ## the storm fields. My guess is that this is due to the
+                        ## crossing of the 0° longitude line. This should be fixed
+                        ## process_data_collection method.
+
+                        if out_data.shape[-2:] != (
+                            241,
+                            241,
+                        ):
+                            raise ValueError(
+                                f"Invalid shape for stamp {stamp}... Skipping..."
+                            )
+                        else:
+                            inputs = out_data
+                            targets = out_targets
+                            outstamps = temp_stamps  # leadtimes[bool_idx]
+                            # base_stamps = np.full_like(outstamps, stamp)
+                            out_leads = temp_leads
+
+                    except ValueError as e:
+                        if kwargs.get("verbose", False):
+                            print(f"Problem processing {stamp}... Skipping...")
+                            print(e)
+                else:
+                    try:
+                        if out_data.shape[-2:] != (241, 241):
+                            raise ValueError(
+                                f"Invalid shape for stamp {stamp}... Skipping..."
+                            )
+                        else:
+                            inputs = np.vstack([inputs, out_data])
+                            targets = np.vstack([targets, out_targets])
+                            outstamps = np.hstack([outstamps, temp_stamps])
+                            out_leads = np.hstack([out_leads, temp_leads])
+
+                        # outstamps = np.hstack([outstamps, leadtimes[bool_idx]])
+                        # out_leads = np.hstack(
+                        #     [out_leads, temp_ds[leadtime_coord].values[bool_idx]]
+                        # )
+
+                    except ValueError as e:
+                        if kwargs.get("verbose", False):
+                            print(f"Problem processing {stamp}... Skipping...")
+                            print(e)
+
+            # save if the data is not empty
+            if inputs is not None:
+                # save the data to the cache
+                np.save(os.path.join(cache_dir, f"{self.uid}_X.npy"), inputs)
+                np.save(os.path.join(cache_dir, f"{self.uid}_Y.npy"), targets)
+                np.save(os.path.join(cache_dir, f"{self.uid}_t.npy"), outstamps)
+                np.save(os.path.join(cache_dir, f"{self.uid}_leads.npy"), out_leads)
+
+                # load saved files into dask arrays
                 X = da.from_array(
                     np.load(os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r")
                 )
@@ -1662,131 +1950,20 @@ class tc_track:
                         os.path.join(cache_dir, f"{self.uid}_leads.npy"), mmap_mode="r"
                     )
                 )
-                if kwargs.get("verbose", False):
-                    print(
-                        f"Succesfully loaded cache files for {self.uid} from cache...",
-                        flush=True,
-                    )
-
                 return X, Y, t, leads
-            except Exception as e:
-                if kwargs.get("debug", False):
-                    print(
-                        f"Error loading cache files for {self.uid}. Rebuilding cache..."
-                    )
-                    if kwargs.get("verbose", False):
-                        print(e)
-        else:
-            os.makedirs(cache_dir)
-
-        ai_model = kwargs.get("ai_model", "panguweather")
-        # Check if the dataset doesn't exist in the object
-
-        if not hasattr(self, "AI_ds"):
-            # if it doesnt, try loading it
-            self.load_ai_data(**kwargs)
-
-        assert hasattr(
-            self, "AI_ds"
-        ), f"AI dataset not found for {self.uid} with model {ai_model}"
-
-        lat_coord, lon_coord, time_coord, level_coord, leadtime_coord = get_coord_vars(
-            self.AI_ds
-        )
-
-        # Get ground truth and valid timestamps
-        gt, stamps = self.get_ground_truth(**kwargs)
-
-        valid_stamps = sanitize_timestamps(stamps, self.AI_ds, time_coord)
-
-        gt = gt[np.isin(stamps, valid_stamps)]
-        stamps = stamps[np.isin(stamps, valid_stamps)]
-
-        if len(gt) == 0:
-            if kwargs.get("verbose", False) or kwargs.get("debug", False):
-                print(f"No valid timestamps found for {self.uid} with model {ai_model}")
-            return
-
-        ##TODO: Implement hard drive caching for the AI data
-
-        # Get the AI data
-        inputs = None
-        targets = None
-        outstamps = None
-        out_leads = None
-        for stamp in stamps:
-
-            temp_ds = self.AI_ds.sel({time_coord: stamp})
-            temp_ds = temp_ds.where(~temp_ds.isnull(), drop=True)
-
-            timedeltas = temp_ds[leadtime_coord].values.astype("timedelta64[h]")
-            leadtimes = stamp + timedeltas
-
-            # make a boolean index to see what leadtime data we have a
-            # truth value for
-            bool_idx = np.isin(leadtimes, stamps)
-
-            out_data = temp_ds.isel({leadtime_coord: bool_idx}).to_array().values
-            out_data = np.moveaxis(out_data, 0, 1)
-            out_targets = gt[np.isin(stamps, leadtimes[bool_idx])]
-            base_targets = gt[stamps == stamp]
-
-            if outstamps is None:
-                try:
-                    if out_data.shape[-2:] != (
-                        241,
-                        241,
-                    ):
-                        raise ValueError(
-                            f"Invalid shape for stamp {stamp}... Skipping..."
-                        )
-
-                    outstamps = leadtimes[bool_idx]
-                    base_stamps = np.full_like(outstamps, stamp)
-
-                    out_leads = temp_ds[leadtime_coord].values[bool_idx]
-                    inputs = out_data
-                    targets = out_targets
-                except ValueError as e:
-                    if kwargs.get("verbose", False):
-                        print(f"Problem processing {stamp}... Skipping...")
-                        print(e)
             else:
-                try:
-                    outstamps = np.hstack([outstamps, leadtimes[bool_idx]])
-                    out_leads = np.hstack(
-                        [out_leads, temp_ds[leadtime_coord].values[bool_idx]]
-                    )
-                    inputs = np.vstack([inputs, out_data])
-                    targets = np.vstack([targets, out_targets])
-                except ValueError as e:
-                    if kwargs.get("verbose", False):
-                        print(f"Problem processing {stamp}... Skipping...")
-                        print(e)
+                # save empty arrays to the cache
+                np.save(os.path.join(cache_dir, f"{self.uid}_X.npy"), np.array([]))
+                np.save(os.path.join(cache_dir, f"{self.uid}_Y.npy"), np.array([]))
+                np.save(os.path.join(cache_dir, f"{self.uid}_t.npy"), np.array([]))
+                np.save(os.path.join(cache_dir, f"{self.uid}_leads.npy"), np.array([]))
+                return np.array([]), np.array([]), np.array([]), np.array([])
 
-        # save if the data is not empty
-        if inputs is not None:
-            # save the data to the cache
-            np.save(os.path.join(cache_dir, f"{self.uid}_X.npy"), inputs)
-            np.save(os.path.join(cache_dir, f"{self.uid}_Y.npy"), targets)
-            np.save(os.path.join(cache_dir, f"{self.uid}_t.npy"), outstamps)
-            np.save(os.path.join(cache_dir, f"{self.uid}_leads.npy"), out_leads)
-
-            # load saved files into dask arrays
-            X = da.from_array(
-                np.load(os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r")
-            )
-            Y = da.from_array(
-                np.load(os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r")
-            )
-            t = da.from_array(
-                np.load(os.path.join(cache_dir, f"{self.uid}_t.npy"), mmap_mode="r")
-            )
-            leads = da.from_array(
-                np.load(os.path.join(cache_dir, f"{self.uid}_leads.npy"), mmap_mode="r")
-            )
-
-            return X, Y, t, leads
+        except Exception as e:
+            if kwargs.get("verbose", False):
+                print(f"Error serving AI data for {self.uid} with model {ai_model}")
+                print(e)
+            return None
 
     def get_ground_truth(self, **kwargs):
         ground_truth = kwargs.get("ground_truth", ["wind", "pressure"])
@@ -2187,11 +2364,11 @@ class tc_track:
 
 
 # %%
-if __name__ == "__main__":
-    sets, data = get_sets(
-        {"train": 0.6, "test": 0.2},
-        datadir="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
-    )
-    input_means = data["train"]["inputs"].mean(axis=(0, -1, -2)).compute()
+# if __name__ == "__main__":
+#     sets, data = get_sets(
+#         {"train": 0.6, "test": 0.2},
+#         datadir="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+#     )
+#     input_means = data["train"]["inputs"].mean(axis=(0, -1, -2)).compute()
 
 # %%

@@ -662,20 +662,34 @@ class AI_Data_Collection:
         dates = dates[np.isin(dates.hour, np.arange(0, 24, 3))]
 
         ds_list = []
+
+        chunk_opts = kwargs.get(
+            "chunk_opts",
+            {
+                "time": 1,
+                "leadtime_hours": 1,
+            },
+        )
+
         for date in dates:
             key = str(date.year)
             file_list = self.meta_dfs[key]
 
             for file in file_list:
-                time_str = np.datetime64(file.split("_")[1]).astype("datetime64[ns]")
+                time_str = file.split("_")[1].replace("-", "T").replace(".", "-")
+                time_str = time_str.replace("h", ":").replace("m", "")
+                time_str = np.datetime64(time_str)
                 if date == time_str:
                     ds_list.append(
-                        time_to_validtime(
-                            xr.open_dataset(
-                                os.path.join(self.data_path, key, file),
-                            ),
-                            time_str,
-                        )
+                        # time_to_validtime(
+                        #     xr.open_dataset(
+                        #         os.path.join(self.data_path, key, file),
+                        #     ),
+                        #     time_str,
+                        # )
+                        xr.open_dataset(
+                            os.path.join(self.data_path, key, file),
+                        ).chunk(chunk_opts)
                     )
         ds = xr.concat(ds_list, dim="time")
 

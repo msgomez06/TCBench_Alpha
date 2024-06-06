@@ -346,13 +346,16 @@ def hurricane_symbol():
 
 
 def get_TC_seasons(
-    tracks_file="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/",
     **kwargs,
 ):
+    tracks_path = kwargs.get(
+        "tracks_path",
+        "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/",
+    )
+
     cols = kwargs.get("track_columns", constants.ibtracs_cols)
     min_season = kwargs.get("min_season", 1990)
     track_data = read_hist_track_file(
-        tracks_path=tracks_file,
         track_cols=cols,
         backend=cols._track_cols__metadata.get("loader"),
         **kwargs,
@@ -469,10 +472,10 @@ def get_sets(splits: dict, **kwargs):
         [key in ["train", "test", "validation"] for key in splits.keys()]
     ), "Invalid split values. Unknown key in splits dictionary; expected 'train', 'test', and 'validation' keys"
 
-    datadir = kwargs.get("datadir", os.path.join(repo_path, "data"))
+    datadir_path = kwargs.get("datadir_path", os.path.join(repo_path, "data"))
 
     # get the folders in datadir and filter out the ones that are not storm seasons
-    season_folders = [folder for folder in os.listdir(datadir) if folder.isdigit()]
+    season_folders = [folder for folder in os.listdir(datadir_path) if folder.isdigit()]
     season_folders = list(np.sort(np.array(season_folders).astype(int)))
 
     test_strategy = kwargs.get("test_strategy", "last")
@@ -548,13 +551,11 @@ def get_sets(splits: dict, **kwargs):
                     train_set = other_folders
 
         sets = {
-            "train": get_TC_seasons(season_list=train_set, datadir_path=datadir),
-            "test": get_TC_seasons(season_list=test_set, datadir_path=datadir),
+            "train": get_TC_seasons(season_list=train_set, **kwargs),
+            "test": get_TC_seasons(season_list=test_set, **kwargs),
         }
         if val_set is not None:
-            sets["validation"] = get_TC_seasons(
-                season_list=val_set, datadir_path=datadir
-            )
+            sets["validation"] = get_TC_seasons(season_list=val_set, **kwargs)
     elif test_strategy == "custom":
         sets = {}
         for key, item in splits.items():

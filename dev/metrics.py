@@ -32,6 +32,24 @@ import joblib as jl
 from utils import toolbox, constants, ML_functions as mlf
 from utils import data_lib as dlib
 
+# %% Reference Dictionaries
+short_names = {
+    "root_mean_squared_error": "RMSE",
+    "mean_squared_error": "MSE",
+    "mean_absolute_error": "MAE",
+    "mean_absolute_percentage_error": "MAPE",
+    "mean_squared_logarithmic_error": "MSLE",
+    "r2_score": "R2",
+    "explained_variance_score": "EV",
+    "max_error": "ME",
+    "mean_poisson_deviance": "MPD",
+    "mean_gamma_deviance": "MGD",
+    "mean_tweedie_deviance": "MTD",
+    "continuous_ranked_probability_score": "CRPS",
+}
+
+units = {"wind": "kts", "pressure": "hPa"}
+
 
 # %% Utilities
 def _check_regression(y_true, y_pred):
@@ -192,17 +210,43 @@ def summarize_performance(y_true, y_pred, y_baseline, metrics: list, **kwargs):
     # y_true, y_pred = _check_regression(y_true, y_pred)
     # y_true, y_baseline = _check_regression(y_true, y_baseline)
 
+    # Assert that the predictions have the shape (n_samples, n_features)
+    assert y_pred.ndim == 2, "y_pred must have shape (n_samples, n_features)"
+
+    y_labels = kwargs.get("y_labels", {0: "Wind", 1: "Pressure"})
+
     # Compute the performance metrics
     performance = {}
     for metric in metrics:
-        performance[metric.__name__] = metric(y_true, y_pred)
-        performance[f"{metric.__name__}_baseline"] = metric(y_true, y_baseline)
+        for i in range(y_pred.shape[1]):
+            y_true_i = y_true[:, i]
+            y_pred_i = y_pred[:, i]
+            y_baseline_i = y_baseline[:, i]
 
-        if kwargs.get("skill", True):
-            performance[f"{metric.__name__}_skill"] = 1 - (
-                performance[metric.__name__]
-                / performance[f"{metric.__name__}_baseline"]
+            if metric.__name__ in short_names.keys():
+                metric_name = short_names[metric.__name__]
+            else:
+                metric_name = metric.__name__
+
+            performance[f"{metric_name}_{y_labels[i]}"] = metric(y_true_i, y_pred_i)
+            performance[f"{metric_name}_{y_labels[i]}_baseline"] = metric(
+                y_true_i, y_baseline_i
             )
+
+            if kwargs.get("skill", True):
+                performance[f"{metric_name}_{y_labels[i]}_skill"] = (
+                    1
+                    - performance[f"{metric_name}_{y_labels[i]}"]
+                    / performance[f"{metric_name}_{y_labels[i]}_baseline"]
+                )
+        # performance[metric.__name__] = metric(y_true, y_pred)
+        # performance[f"{metric.__name__}_baseline"] = metric(y_true, y_baseline)
+
+        # if kwargs.get("skill", True):
+        #     performance[f"{metric.__name__}_skill"] = 1 - (
+        #         performance[metric.__name__]
+        #         / performance[f"{metric.__name__}_baseline"]
+        #     )
 
     return performance
 
@@ -244,19 +288,20 @@ def plot_performance(metrics: dict, ax, **kwargs):
     metric_names = np.unique(metric_names)
 
     # Define the colors for the bars
-    colors = kwargs.get("colors", plt.cm.tab10.colors)
+    colors = kwargs.get("colors", plt.cm.tab20.colors)
 
     ax1_labels = []
     # Plot the performance metrics
     for i, metric in enumerate(metric_names):
         model_metric = metrics[metric]
         baseline_metric = metrics[f"{metric}_baseline"]
-
+        var = metric.split("_")[-1].lower()
+        unit = units.get(var, "")
         ax1.bar(
             [i * 3],
             [model_metric],
             color=colors[i % len(colors)],
-            label=f"{model_name} {metric}",
+            label=f"{model_name} {metric} ({unit})",
             hatch=kwargs.get("model_hatch", None),
         )
 
@@ -264,7 +309,7 @@ def plot_performance(metrics: dict, ax, **kwargs):
             [i * 3 + 1],
             [baseline_metric],
             color=colors[i % len(colors)],
-            label=f"{baseline_name} {metric}",
+            label=f"{baseline_name} {metric} ({unit})",
             hatch=kwargs.get("baseline_hatch", "//"),
         )
 
@@ -286,12 +331,12 @@ def plot_performance(metrics: dict, ax, **kwargs):
 
     ax1.set_xticks(range(len(metric_names) * 3))
     ax1.set_xticklabels([""] * len(ax1_labels))
-    ax1.legend()
+    ax1.legend(loc="lower right", framealpha=0.5)
 
     if kwargs.get("skill", True):
         ax2.set_xticks(range(len(metric_names)))
         ax2.set_xticklabels([""] * len(metric_names))
-        ax2.legend()
+        ax2.legend(loc="lower right", framealpha=0.5)
 
     # if kwargs.get("skill", True):
     #     for i, (metric, value) in enumerate(metrics.items()):

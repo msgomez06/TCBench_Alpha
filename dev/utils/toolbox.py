@@ -472,7 +472,7 @@ def get_sets(splits: dict, **kwargs):
         [key in ["train", "test", "validation"] for key in splits.keys()]
     ), "Invalid split values. Unknown key in splits dictionary; expected 'train', 'test', and 'validation' keys"
 
-    datadir_path = kwargs.get("datadir_path", os.path.join(repo_path, "data"))
+    datadir_path = kwargs.get("datadir", os.path.join(repo_path, "data"))
 
     # get the folders in datadir and filter out the ones that are not storm seasons
     season_folders = [folder for folder in os.listdir(datadir_path) if folder.isdigit()]
@@ -570,7 +570,9 @@ def get_sets(splits: dict, **kwargs):
             ), f"Invalid values for {key} in splits: {item}. Season not found in datadir."
             assert key in ["train", "test", "validation"], "Unsupported key in splits."
             assert len(item) > 0, f"Empty list for {key} in splits."
-            sets[key] = get_TC_seasons(season_list=item, datadir_path=datadir)
+            sets[key] = get_TC_seasons(
+                season_list=item, datadir_path=datadir_path, **kwargs
+            )
 
     else:
         raise ValueError(f"Unsupported test strategy {test_strategy}")

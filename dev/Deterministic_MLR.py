@@ -38,6 +38,7 @@ try:
     import importlib
 
     importlib.reload(baselines)
+    importlib.reload(metrics)
 except:
     import baselines
 
@@ -85,7 +86,7 @@ y_persistence = y_persistence.compute()
 # to the persistence model
 
 # Importing the metrics
-from sklearn.metrics import root_mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import root_mean_squared_error, mean_absolute_error
 
 global_performance = metrics.summarize_performance(
     y_true,  # Ground truth
@@ -141,3 +142,5 @@ for idx, lead in enumerate(unique_leads):
     # Append the lead time to the title for both axes
     axes[idx][0].set_title(f"\n Lead Time: +{lead}h \n" + axes[idx][0].get_title())
     axes[idx][1].set_title(f"\n Lead Time: +{lead}h \n" + axes[idx][1].get_title())
+
+# %%

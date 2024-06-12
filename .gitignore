@@ -8,5 +8,8 @@
 environment.yml
 dev/slurm/
 dev/slurm/*
+dev/results/
+dev/results/*
 dev/utils/__pycache__/*
 /tracks/*
+*.pt

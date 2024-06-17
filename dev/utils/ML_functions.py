@@ -66,39 +66,51 @@ class DaskDataset(Dataset):
         self.target_data = target_data
         self.set_name = kwargs.get("set_name", "unnamed")
 
-        self.chunk_size = kwargs.get("chunk_size", 1)
+        self.chunk_size = kwargs.get("chunk_size", 32)
 
         # # Attempt at optimizing dask array
         # self.AI_X = optimize(self.AI_X.rechunk((self.chunk_size, 5, 241, 241)))[0]
         # self.base_int = optimize(self.base_int.rechunk((self.chunk_size, 2)))[0]
 
         # Attempt at optimizing dask array
-        self.AI_X = self.AI_X.rechunk((self.chunk_size, 5, 241, 241))
-        self.base_int = self.base_int.rechunk((self.chunk_size, 2))
+        # self.AI_X = self.AI_X.rechunk((self.chunk_size, 5, 241, 241))
+        # self.base_int = self.base_int.rechunk((self.chunk_size, 2))
 
+        # Scale the data using the scaler using dask.delayed.ravel
 
-        self.AI_X = da.map_blocks(
-            self.AI_scaler.transform, self.AI_X, dtype=np.float32, chunks=self.AI_X.chunksize)
-        self.base_int = da.map_blocks(
-            self.base_scaler.transform, self.base_int, dtype=np.float32, chunks=self.base_int.chunksize)
+        interim = self.AI_X.rechunk((self.chunk_size, 5, 241, 241)).to_delayed().ravel()
+        interim = [da.from_delayed(self.AI_scaler.transform(block), shape=(min(self.chunk_size, self.AI_X.shape[0] - i*self.chunk_size), 5, 241, 241), dtype=self.AI_X.dtype) for i, block in enumerate(interim)]
+        self.AI_X = da.concatenate(interim)
 
-        zarr_name = kwargs.get("zarr_name", "unnamed")
-        cachedir = kwargs.get("cachedir", os.path.join(os.getcwd(), 'cache'))
-        zarr_path = os.path.join(cachedir, f"{zarr_name}.zarr")
+        # self.AI_X = da.map_blocks(
+        #     self.AI_scaler.transform, self.AI_X, dtype=np.float32, chunks=self.AI_X.chunksize)
+        # self.base_int = da.map_blocks(
+        #     self.base_scaler.transform, self.base_int, dtype=np.float32, chunks=self.base_int.chunksize)
 
-        if not os.path.exists(zarr_path):
-            os.makedirs(zarr_path)
+        if kwargs.get("load_into_memory", False):
+            self.AI_X = self.AI_X.compute()
+            self.base_int = self.base_int.compute()
+            self.target_data = self.target_data.compute()
+        else:
 
-        # save AI_X to zarr
-        AI_X_path = os.path.join(zarr_path, "AI_X")
-        if not os.path.exists(AI_X_path):
-            self.AI_X.to_zarr(AI_X_path)
-        elif kwargs.get("overwrite", True):
-            # overwrite
-            self.AI_X.to_zarr(AI_X_path, overwrite=True)
-        
-        # load AI_X from zarr
-        self.AI_X = da.from_zarr(AI_X_path)
+            zarr_name = kwargs.get("zarr_name", "unnamed")
+            cachedir = kwargs.get("cachedir", os.path.join(os.getcwd(), 'cache'))
+            zarr_path = os.path.join(cachedir, f"{zarr_name}.zarr")
+
+            if not os.path.exists(zarr_path):
+                os.makedirs(zarr_path)
+
+            # save AI_X to zarr
+            AI_X_path = os.path.join(zarr_path, "AI_X")
+            if not os.path.exists(AI_X_path):
+                self.AI_X.rechunk((self.chunk_size, 5, 241, 241)).to_zarr(AI_X_path)
+                # self.AI_X.to_zarr(AI_X_path)
+            elif kwargs.get("overwrite", True):
+                # overwrite
+                self.AI_X.to_zarr(AI_X_path, overwrite=True)
+            
+            # load AI_X from zarr
+            self.AI_X = da.from_zarr(AI_X_path)
 
         self.device = kwargs.get("device", torch.device('cuda') if torch.cuda.is_available else torch.device("cpu"))
 

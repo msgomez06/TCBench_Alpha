@@ -1786,7 +1786,8 @@ class tc_track:
                     X = da.from_array(
                         np.load(
                             os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"
-                        )
+                        ),
+                        chunks=(32, 5, 241, 241),
                     )
                     Y = da.from_array(
                         np.load(
@@ -1940,7 +1941,8 @@ class tc_track:
 
                 # load saved files into dask arrays
                 X = da.from_array(
-                    np.load(os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r")
+                    np.load(os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"),
+                    chunks=(32, 5, 241, 241),
                 )
                 Y = da.from_array(
                     np.load(os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r")

@@ -517,6 +517,9 @@ class TC_DeltaIntensity_MLR(BaseEstimator):
 
 
 class TC_DeltaIntensity_CNN(nn.Module):
+    def __str__(self):
+        return "Dilated_CNN"
+
     def __init__(self, **kwargs):
         super(TC_DeltaIntensity_CNN, self).__init__()
 
@@ -525,21 +528,27 @@ class TC_DeltaIntensity_CNN(nn.Module):
         conv_depths = kwargs.get("depths", [32, 16, 16, 64, 96])
 
         # Layer that sees all inputs
+        # Output size = 120x120
         self.conv1 = nn.Conv2d(5, conv_depths[0], kernel_size=(2, 2), padding=0)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        # Output size = 120x120
+        
 
         # First context layer
+        # Output size = 120x120
         self.conv2 = nn.Conv2d(
             5, conv_depths[1], kernel_size=(3, 3), padding=1, stride=2, dilation=2
         )
-        # Output size = 120x120
+        
 
         # Second context layer
-        self.conv3 = nn.Conv2d(
-            5, conv_depths[2], kernel_size=(3, 3), padding=1, stride=4, dilation=3
-        )
         # Output size = 60x60
+        # self.conv3 = nn.Conv2d(
+        #     5, conv_depths[2], kernel_size=(3, 3), padding=1, stride=4, dilation=3
+        # )
+        self.conv3 = nn.Conv2d(
+            5, conv_depths[2], kernel_size=(3, 3), padding=4, stride=4, dilation=6
+        )
+        
 
         # layer to convolve the first output with the first context layer.
         # There are 16+32=48 input channels and 64 output channels
@@ -592,6 +601,58 @@ class TC_DeltaIntensity_CNN(nn.Module):
 
         return x
 
+class Regularized_Dilated_CNN(TC_DeltaIntensity_CNN):
+    def __str__(self):
+        return "Regularized_Dilated_CNN"
+    
+    def __init__(self, **kwargs):
+        super(Regularized_Dilated_CNN, self).__init__(**kwargs)
+        self.dropout2d = nn.Dropout2d(kwargs.get('dropout2d', 0.25))
+        self.dropout = nn.Dropout(kwargs.get('dropout', 0.25))
+    
+    def forward(self, x, base_int):
+        # Get the context from the inputs
+        x_context1 = F.relu(self.conv2(x))
+        x_context2 = F.relu(self.conv3(x))
+
+        # Apply first convolutional layer
+        x = self.pool(F.relu(self.conv1(x)))
+
+        # Apply 2d dropout
+        x = self.dropout2d(x)
+
+        # Apply the first context layer
+        x = torch.cat([x, x_context1], dim=1)
+        x = F.relu(self.conv4(x))
+        x = self.pool(x)
+
+        # Apply 2d dropout
+        x = self.dropout2d(x)
+
+        # Apply the second context layer
+        x = torch.cat([x, x_context2], dim=1)
+        x = F.relu(self.conv5(x))
+
+        # Apply 2d dropout
+        x = self.dropout2d(x)
+
+        # Flatten the output
+        x = x.view(-1, 60 * 60 * 96)
+
+        # Apply the dense layers
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        base_int = torch.squeeze(F.relu(self.fc2(base_int)))
+        
+        # Concatenate the base intensity with the output of the dense layer
+        x = torch.cat([x, base_int], dim=1)
+        # and dropout
+        x = self.dropout(x)
+        
+        x = self.fc3(x)
+
+        return x
+
 
 class LinearRegressor(nn.Module):
     def __init__(self, input_dim):
@@ -603,20 +664,30 @@ class LinearRegressor(nn.Module):
 
 
 class SimpleCNN(nn.Module):
-    def __init__(self):
+    def __str__(self):
+        return "Simple_CNN"
+
+    def __init__(self, **kwargs):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(5, 32, kernel_size=3, stride=1, padding=1)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.fc1 = nn.Linear(64 * 7 * 7, 512)
-        self.fc2 = nn.Linear(512, 10)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.fc1 = nn.Linear(128 * 30 * 30, 512)
+        # We will encode the baseline intensity with a dense layer
+        self.fc2 = nn.Linear(2, 16)
+        self.fc3 = nn.Linear(512+16, 2 if kwargs.get('deterministic', False) else 4)
 
-    def forward(self, x):
+    def forward(self, x, base_int):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 64 * 7 * 7)
+        x = self.pool(F.relu(self.conv3(x)))
+        x = x.view(-1, 128 * 30 * 30)
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        base_int = torch.squeeze(F.relu(self.fc2(base_int)))
+        # Concatenate the base intensity with the output of the dense layer
+        x = torch.cat([x, base_int], dim=1)
+        x = self.fc3(x)
         return x
 
 

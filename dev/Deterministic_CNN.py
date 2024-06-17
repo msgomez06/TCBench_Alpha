@@ -9,11 +9,11 @@ import matplotlib as mpl
 import numpy as np
 import dask.array as da
 from sklearn.preprocessing import StandardScaler
-from dask_ml.preprocessing import StandardScaler as DaskStandardScaler
 import torch
 import dask
 import multiprocessing
-from dask import optimize
+# from dask import optimize
+import time
 
 
 # Backend Libraries
@@ -23,11 +23,16 @@ from utils import toolbox, ML_functions as mlf
 import metrics
 
 if __name__ == "__main__":
-    print("Imports successful")
-    torch.multiprocessing.set_start_method("spawn")
+    print("Imports successful", flush=True)
+
+    #check if the context has been set for torch multiprocessing
+    if not torch.multiprocessing.get_start_method(allow_none=True) == "spawn":
+        torch.multiprocessing.set_start_method("spawn")
+
     #  Setup
     datadir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha"
     cache_dir = "/scratch/mgomezd1/cache"
+    result_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/"
 
     # Check for GPU availability
     if torch.cuda.device_count() > 0:
@@ -50,7 +55,7 @@ if __name__ == "__main__":
     print("Loading datasets...", flush=True)
 
     sets, data = toolbox.get_sets(
-        {"train": years[:-2], "test": [2020], "validation": years[-2:]},
+        {"train": years[:-2], "validation": years[-2:], "test": [2020],},
         datadir=datadir,
         test_strategy="custom",
         # use_cached=False,
@@ -136,6 +141,8 @@ if __name__ == "__main__":
         cachedir="/scratch/mgomezd1/cache",  # os.path.join(datadir, 'cache'),
         zarr_name="train",
         overwrite=False,
+        num_workers=num_cores,
+        # load_into_memory=True,
     )
 
     print("Creating validation DaskDataset...", flush=True)
@@ -149,6 +156,8 @@ if __name__ == "__main__":
         cachedir="/scratch/mgomezd1/cache",  # os.path.join(datadir, 'cache'),
         zarr_name="validation",
         overwrite=False,
+        num_workers=num_cores,
+        # load_into_memory=True,
     )
 
     # And make the respective dataloaders
@@ -169,11 +178,14 @@ if __name__ == "__main__":
     #  Model
 
     # We begin by instantiating our baseline model
-    CNN = baselines.TC_DeltaIntensity_CNN(deterministic=True).to(calc_device)
+    # CNN = baselines.TC_DeltaIntensity_CNN(deterministic=True).to(calc_device)
+    # CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
+    CNN = baselines.Regularized_Dilated_CNN(deterministic=True, dropout=0.1, dropout2d=0.1).to(calc_device)
 
-    optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-3, weight_decay=1e-4)
     num_epochs = 30
-    patience = 3
+    patience = 4
+    bias_threshold = 10 # stop if validation loss / train loss > bias_threshold
 
     #  Training
 
@@ -201,6 +213,7 @@ if __name__ == "__main__":
     #         return (loss, metric)
 
     print("Model Training started...", flush=True)
+    start_time = time.strftime("%m-%d-%Hh%M")
     for epoch in range(num_epochs):
         train_loss = 0
         i = 0
@@ -255,12 +268,12 @@ if __name__ == "__main__":
 
         # Save if the NSE is the maximum in our model training history
         if val_loss <= max(val_losses):
-            torch.save(CNN, "./best_model.pt")
-
+            torch.save(CNN, os.path.join(result_dir, f"best_model_{str(CNN)}_{start_time}_epoch-{i}.pt"))
+            
         print(
-            f"Epoch: {epoch+1}/{num_epochs},",
+            f"\nEpoch: {epoch+1}/{num_epochs},",
             f"train_loss: {train_loss},",
-            f"val_loss: {val_loss}, ",
+            f"val_loss: {val_loss},",
             flush=True,
             sep=" ",
         )
@@ -268,16 +281,14 @@ if __name__ == "__main__":
         # Early stopping
         # Stop if the validation loss is greater than all previous patience epochs
         if epoch > patience:
-            if all(val_loss > x for x in val_losses[-patience:]):
+            if all(val_loss > x for x in val_losses[-patience:]) or val_loss / train_loss > bias_threshold:
                 print(f"Early stopping at epoch {epoch+1}")
                 break
 
-
-    # Let's save the train and validation losses in a pickled dictionary
-    losses = {"train": train_losses, "validation": val_losses}
-    result_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/"
-    with open(os.path.join(result_dir, "CNN_losses.pkl"), "wb") as f:
-        pickle.dump(losses, f)
+        # Let's save the train and validation losses in a pickled dictionary
+        losses = {"train": train_losses, "validation": val_losses}
+        with open(os.path.join(result_dir, f"CNN_{str(CNN)}_losses_{start_time}.pkl"), "wb") as f:
+            pickle.dump(losses, f)
 
     # Predict the validation data with the CNN model
     with torch.no_grad():
@@ -289,6 +300,7 @@ if __name__ == "__main__":
             else:
                 y_hat = np.concatenate([y_hat, pred.cpu().numpy()])
     
+    y_hat = y_hat + data["validation"]["base_intensity"].compute()
     
     #  Baseline
 
@@ -331,7 +343,7 @@ if __name__ == "__main__":
     )
     toolbox.plot_facecolors(fig=fig, axes=axes)
     # Save the figure in the results directory
-    fig.savefig(os.path.join(result_dir, "CNN_global_performance.png"))
+    fig.savefig(os.path.join(result_dir, f"CNN_global_performance_{str(CNN)}_{start_time}.png"))
 
     # Let's also go ahead and do the analysis per lead time
     unique_leads = np.unique(data["validation"]["leadtime"].compute())
@@ -370,4 +382,4 @@ if __name__ == "__main__":
         axes[idx][1].set_title(f"\n Lead Time: +{lead}h \n" + axes[idx][1].get_title())
     
     # Save the figure in the results directory
-    fig.savefig(os.path.join(result_dir, "CNN_lead_performance.png"))
+    fig.savefig(os.path.join(result_dir, f"CNN_lead_performance_{str(CNN)}_{start_time}.png"))

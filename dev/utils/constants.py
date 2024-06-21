@@ -216,6 +216,28 @@ valid_coords = {
     "leadtime": ["lead", "Lead", "ldt", "LDT", "valid", "Valid"],
 }
 
+# default variable names
+default_ships_vars = [
+    "DELV",  # Intensity change
+    "VMAX",  # Maximum sustained wind
+    "MSLP",  # Minimum sea level pressure
+    "lat",  # Latitude
+    "CSST",  # Climatological sea surface temperature
+    # "PSLV",  # Climatological sea level pressure
+    "Z850",  # 850 hPa geopotential height
+    "D200",  # 200 hPa divergence
+    "EPOS",  # Surface - Environment theta_e difference, r = 200-800
+    "RHMD",  # 700-500 hPa relative humidity
+    "TWAC",  # Average symmetric tangential wind at 850 hPa (0-600km average)
+    "G200",  # Averaged 200 hPa Temperature Perturbation (r=200-800km)
+    "TADV",  # Averaged 850 to 700 hPa temperature advection, r=0-500km
+    "SHGC",  # Generalized 850-200 hPa shear magnitude, vortex removed (r=0-500km)
+    "LHRD",  # SHDC * sin(lat)
+    "VSHR",  # VMAX*SHDC
+    "T200",  # 200 hPa temperature
+    "T250",  # 250 hPa temperature
+    "SHDC",  # 850-200 hPa shear magnitude, vortex removed (r=0-500km)
+]
 
 # %% SHIPS Metadata
 SHIPS_metadata = {

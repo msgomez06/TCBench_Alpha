@@ -516,6 +516,89 @@ class TC_DeltaIntensity_MLR(BaseEstimator):
     pass
 
 
+class TC_DeltaIntensity_nonDilCNN(nn.Module):
+    def __str__(self):
+        return "Non_Dilated_CNN"
+
+    def __init__(self, **kwargs):
+        super(TC_DeltaIntensity_nonDilCNN, self).__init__()
+
+        # Assume inputs have 241x241 dimensions in channels (u, v, mslp, t_850, z_500)
+
+        conv_depths = kwargs.get("depths", [32, 16, 16, 64, 96])
+
+        self.pool_size = kwargs.get("pool_size", 2)
+        self.pool_stride = kwargs.get("pool_stride", 2)
+
+        # Layer that sees all inputs
+        # Output size = 120x120
+        self.conv1 = nn.Conv2d(
+            5, conv_depths[0] + conv_depths[1], kernel_size=(2, 2), padding=0
+        )
+
+        # layer to convolve the first output with the first context layer.
+        # There are 16+32=48 input channels and 64 output channels
+        # The output dimensions are 120x120
+        self.conv4 = nn.Conv2d(
+            conv_depths[0] + conv_depths[1],
+            conv_depths[2] + conv_depths[3],
+            kernel_size=(3, 3),
+            padding=1,
+        )
+
+        # layer to convolve the second output with the second context layer.
+        # There are 64 + 16 = 80 input channels and 96 output channels
+        # The output dimensions are 60x60
+        self.conv5 = nn.Conv2d(
+            conv_depths[2] + conv_depths[3],
+            conv_depths[4],
+            kernel_size=(3, 3),
+            padding=1,
+        )
+
+        # dense layer to output the prediction. We predict the mean and standard
+        # deviation of the intensity change, both for wind and pressure
+        self.fc1 = nn.Linear(conv_depths[4] * 60 * 60, 128)
+
+        # We will encode the baseline intensity with a dense layer
+        self.fc2 = nn.Linear(2, 16)
+
+        # And make the prediction from the two dense layers
+        self.fc3 = nn.Linear(128 + 16, 2 if kwargs.get("deterministic", False) else 4)
+
+    def forward(self, x, base_int):
+
+        caf = F.leaky_relu
+        daf = F.leaky_relu
+        pooling = F.max_pool2d
+
+        # Apply first convolutional layer
+        x = pooling(
+            caf(self.conv1(x)), kernel_size=self.pool_size, stride=self.pool_stride
+        )
+
+        # Apply the second convolutional layer
+        x = caf(self.conv4(x))
+        x = pooling(x, kernel_size=self.pool_size, stride=self.pool_stride)
+
+        # Apply the final convolutional layer
+        x = self.caf(self.conv5(x))
+
+        # Flatten the output
+        x = x.view(-1, 60 * 60 * 96)
+
+        # Apply the dense layers
+        x = daf(self.fc1(x))
+        base_int = torch.squeeze(self.daf(self.fc2(base_int)))
+
+        # Concatenate the base intensity with the output of the dense layer
+        x = torch.cat([x, base_int], dim=1)
+
+        x = self.fc3(x)
+
+        return x
+
+
 class TC_DeltaIntensity_CNN(nn.Module):
     def __str__(self):
         return "Dilated_CNN"
@@ -527,18 +610,23 @@ class TC_DeltaIntensity_CNN(nn.Module):
 
         conv_depths = kwargs.get("depths", [32, 16, 16, 64, 96])
 
+        self.caf = kwargs.get(
+            "cnn_activation_function", F.leaky_relu
+        )  # Convolutional activation function
+        self.daf = kwargs.get(
+            "dense_activation_function", F.leaky_relu
+        )  # Dense activation function
+
         # Layer that sees all inputs
         # Output size = 120x120
         self.conv1 = nn.Conv2d(5, conv_depths[0], kernel_size=(2, 2), padding=0)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        
 
         # First context layer
         # Output size = 120x120
         self.conv2 = nn.Conv2d(
             5, conv_depths[1], kernel_size=(3, 3), padding=1, stride=2, dilation=2
         )
-        
 
         # Second context layer
         # Output size = 60x60
@@ -548,7 +636,6 @@ class TC_DeltaIntensity_CNN(nn.Module):
         self.conv3 = nn.Conv2d(
             5, conv_depths[2], kernel_size=(3, 3), padding=4, stride=4, dilation=6
         )
-        
 
         # layer to convolve the first output with the first context layer.
         # There are 16+32=48 input channels and 64 output channels
@@ -568,48 +655,95 @@ class TC_DeltaIntensity_CNN(nn.Module):
         self.fc2 = nn.Linear(2, 16)
 
         # And make the prediction from the two dense layers
-        self.fc3 = nn.Linear(128+16, 2 if kwargs.get('deterministic', False) else 4)
+        self.fc3 = nn.Linear(128 + 16, 2 if kwargs.get("deterministic", False) else 4)
 
     def forward(self, x, base_int):
         # Get the context from the inputs
-        x_context1 = F.relu(self.conv2(x))
-        x_context2 = F.relu(self.conv3(x))
+        x_context1 = self.caf(self.conv2(x))
+        x_context2 = self.caf(self.conv3(x))
 
         # Apply first convolutional layer
-        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(self.caf(self.conv1(x)))
 
         # Apply the first context layer
         x = torch.cat([x, x_context1], dim=1)
-        x = F.relu(self.conv4(x))
+        x = self.caf(self.conv4(x))
         x = self.pool(x)
 
         # Apply the second context layer
         x = torch.cat([x, x_context2], dim=1)
-        x = F.relu(self.conv5(x))
+        x = self.caf(self.conv5(x))
 
         # Flatten the output
         x = x.view(-1, 60 * 60 * 96)
 
         # Apply the dense layers
-        x = F.relu(self.fc1(x))
-        base_int = torch.squeeze(F.relu(self.fc2(base_int)))
-        
+        x = self.daf(self.fc1(x))
+        base_int = torch.squeeze(self.daf(self.fc2(base_int)))
+
         # Concatenate the base intensity with the output of the dense layer
         x = torch.cat([x, base_int], dim=1)
-        
+
         x = self.fc3(x)
 
         return x
 
+
+class Regularized_NonDil_CNN(TC_DeltaIntensity_nonDilCNN):
+    def __str__(self):
+        return "Regularized_Dilated_CNN"
+
+    def __init__(self, **kwargs):
+        super(Regularized_NonDil_CNN, self).__init__(**kwargs)
+        self.dropout2d = kwargs.get("dropout2d", 0.25)
+        self.dropout = kwargs.get("dropout", 0.25)
+
+    def forward(self, x, base_int):
+        caf = F.leaky_relu
+        daf = F.leaky_relu
+        pooling = F.max_pool2d
+
+        # Apply first convolutional layer
+        x = pooling(
+            caf(self.conv1(x)), kernel_size=self.pool_size, stride=self.pool_stride
+        )
+        x = F.dropout2d(x, p=self.dropout2d)
+
+        # Apply the second convolutional layer
+        x = caf(self.conv4(x))
+        x = pooling(x, kernel_size=self.pool_size, stride=self.pool_stride)
+        x = F.dropout2d(x, p=self.dropout2d)
+
+        # Apply the final convolutional layer
+        x = caf(self.conv5(x))
+        x = F.dropout2d(x, p=self.dropout2d)
+
+        # Flatten the output
+        x = x.view(-1, 60 * 60 * 96)
+
+        # Apply the dense layers
+        x = daf(self.fc1(x))
+        x = F.dropout(x, p=self.dropout)
+        base_int = torch.squeeze(daf(self.fc2(base_int)))
+        base_int = F.dropout(base_int, p=self.dropout)
+
+        # Concatenate the base intensity with the output of the dense layer
+        x = torch.cat([x, base_int], dim=1)
+
+        x = self.fc3(x)
+
+        return x
+
+
 class Regularized_Dilated_CNN(TC_DeltaIntensity_CNN):
     def __str__(self):
         return "Regularized_Dilated_CNN"
-    
+
     def __init__(self, **kwargs):
         super(Regularized_Dilated_CNN, self).__init__(**kwargs)
-        self.dropout2d = nn.Dropout2d(kwargs.get('dropout2d', 0.25))
-        self.dropout = nn.Dropout(kwargs.get('dropout', 0.25))
-    
+        self.dropout2d = kwargs.get("dropout2d", 0.25)
+        self.dropout = kwargs.get("dropout", 0.25)
+
     def forward(self, x, base_int):
         # Get the context from the inputs
         x_context1 = F.relu(self.conv2(x))
@@ -619,7 +753,7 @@ class Regularized_Dilated_CNN(TC_DeltaIntensity_CNN):
         x = self.pool(F.relu(self.conv1(x)))
 
         # Apply 2d dropout
-        x = self.dropout2d(x)
+        x = F.dropout2d(x, p=self.dropout2d)
 
         # Apply the first context layer
         x = torch.cat([x, x_context1], dim=1)
@@ -627,28 +761,27 @@ class Regularized_Dilated_CNN(TC_DeltaIntensity_CNN):
         x = self.pool(x)
 
         # Apply 2d dropout
-        x = self.dropout2d(x)
+        x = F.dropout2d(x, p=self.dropout2d)
 
         # Apply the second context layer
         x = torch.cat([x, x_context2], dim=1)
         x = F.relu(self.conv5(x))
 
         # Apply 2d dropout
-        x = self.dropout2d(x)
+        x = F.dropout2d(x, p=self.dropout2d)
 
         # Flatten the output
         x = x.view(-1, 60 * 60 * 96)
 
-        # Apply the dense layers
+        # Apply the dense layers and dropout each path
         x = F.relu(self.fc1(x))
-        x = self.dropout(x)
+        x = F.dropout(x, p=self.dropout)
         base_int = torch.squeeze(F.relu(self.fc2(base_int)))
-        
+        base_int = F.dropout(base_int, p=self.dropout)
+
         # Concatenate the base intensity with the output of the dense layer
         x = torch.cat([x, base_int], dim=1)
-        # and dropout
-        x = self.dropout(x)
-        
+
         x = self.fc3(x)
 
         return x
@@ -676,7 +809,7 @@ class SimpleCNN(nn.Module):
         self.fc1 = nn.Linear(128 * 30 * 30, 512)
         # We will encode the baseline intensity with a dense layer
         self.fc2 = nn.Linear(2, 16)
-        self.fc3 = nn.Linear(512+16, 2 if kwargs.get('deterministic', False) else 4)
+        self.fc3 = nn.Linear(512 + 16, 2 if kwargs.get("deterministic", False) else 4)
 
     def forward(self, x, base_int):
         x = self.pool(F.relu(self.conv1(x)))
@@ -690,5 +823,7 @@ class SimpleCNN(nn.Module):
         x = self.fc3(x)
         return x
 
+
+# %%
 
 # %%

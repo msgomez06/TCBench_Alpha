@@ -93,6 +93,17 @@ def plot_facecolors(**kwargs):
                 label.set_color(textcolor)
 
 
+def rolling_window(arr, window_size, step=1):
+    # Calculate the number of windows
+    num_windows = ((arr.size - window_size) // step) + 1
+    # Calculate the shape of the new array
+    new_shape = (num_windows, window_size)
+    # Calculate the new strides
+    new_strides = (arr.strides[0] * step, arr.strides[0])
+    # Create the rolling window view
+    return np.lib.stride_tricks.as_strided(arr, shape=new_shape, strides=new_strides)
+
+
 def axis_generator(**kwargs):
     origin = kwargs.get("origin", (0, 0))
     resolution = kwargs.get("resolution", 0.25)
@@ -404,12 +415,22 @@ def get_TC_seasons(
         season_storms = []
         for storm in unique_storms:
             storm_data = track_data[track_data[uidx] == storm]
+            temp_alt = storm_data[alt_id][storm_data[alt_id].str.strip() != ""]
+            temp_alt = temp_alt.mode()
+            if len(temp_alt) > 1:
+                print(f"Storm {storm} has multiple alternative IDs: {temp_alt}")
+                print(f"Using the first alternative ID: {temp_alt[0]}")
+                temp_alt = temp_alt[0]
+            elif len(temp_alt) == 1:
+                temp_alt = temp_alt.item()
+            else:
+                temp_alt = None
             track = tc_track(
                 UID=storm_data[uidx].iloc[0],
                 NAME=storm_data[name].iloc[0],
                 track=storm_data[[y, x]].to_numpy(),
                 timestamps=storm_data[t].to_numpy(),
-                ALT_ID=storm_data[alt_id].iloc[0],
+                ALT_ID=temp_alt,
                 wind=storm_data[wind].to_numpy(),
                 pres=storm_data[pres].to_numpy(),
                 storm_season=season,
@@ -419,6 +440,234 @@ def get_TC_seasons(
         season_dict[season] = season_storms
 
     return season_dict
+
+
+def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
+
+    assert isinstance(
+        splits, dict
+    ), f"Invalid type for splits: {type(splits)}. Expected dict"
+
+    assert isinstance(
+        season_dict, dict
+    ), f"Invalid type for season data: {type(season_dict)}. Expected dict"
+
+    assert np.all(
+        [key in ["train", "test", "validation"] for key in splits.keys()]
+    ), "Invalid split values. Unknown key in splits dictionary; expected 'train', 'test', and 'validation' keys"
+
+    datadir_path = kwargs.get("datadir", os.path.join(repo_path, "data"))
+    timeseries_steps = kwargs.get("timeseries_length", 6)
+    delta_target = kwargs.get("delta_target", 24)  # Target intensity lead time in hours
+
+    available_seasons = list(season_dict.keys())
+
+    test_strategy = kwargs.get("test_strategy", "last")
+    if test_strategy in ["last", "random", "first"]:
+        train_set = None
+        val_set = None
+        test_set = None
+        assert (np.sum([value for value in splits.values()]) <= 1) and (
+            np.all([value > 0 for value in splits.values()])
+        ), (
+            "Invalid split values. Sum of splits should be less than "
+            "or equal to 1, and all splits must be greater than 0"
+        )
+        if test_strategy == "last":
+            test_size = int(np.ceil(splits["test"] * len(available_seasons)))
+            test_set = available_seasons[-test_size:]
+            other_seasons = available_seasons[:-test_size]
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(available_seasons)))
+                val_set = other_seasons[-val_size:]
+                train_set = other_seasons[:-val_size]
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(available_seasons)))
+                    val_set = other_seasons[-val_size:]
+                    train_set = other_seasons[:-val_size]
+                else:
+                    train_set = other_seasons
+        elif test_strategy == "random":
+            random_generator = kwargs.get("random_generator", np.random.default_rng(42))
+            test_size = int(np.ceil(splits["test"] * len(available_seasons)))
+            test_set = random_generator.choice(
+                available_seasons, test_size, replace=False
+            )
+            other_seasons = np.setdiff1d(available_seasons, test_set)
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(available_seasons)))
+                val_set = random_generator.choice(other_seasons, val_size, replace=False)
+                train_set = np.setdiff1d(other_seasons, val_set)
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(available_seasons)))
+                    val_set = random_generator.choice(other_seasons, val_size, replace=False)
+                    train_set = np.setdiff1d(other_seasons, val_set)
+                else:
+                    train_set = other_seasons
+        elif test_strategy == "first":
+            test_size = int(np.ceil(splits["test"] * len(available_seasons)))
+            test_set = available_seasons[:test_size]
+            other_seasons = available_seasons[test_size:]
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(available_seasons)))
+                val_set = other_seasons[:val_size]
+                train_set = other_seasons[val_size:]
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(available_seasons)))
+                    val_set = other_seasons[:val_size]
+                    train_set = other_seasons[val_size:]
+                else:
+                    train_set = other_seasons
+    elif test_strategy == "custom":
+        for key, item in splits.items():
+            assert isinstance(
+                item, list
+            ), f"Invalid type for {key} in splits: {type(item)}. Expected list."
+            assert np.all(
+                [isinstance(value, int) for value in item]
+            ), f"Invalid type for values in {key} in splits: {type(item)}. Expected int."
+            assert np.all(
+                [value in available_seasons for value in item]
+            ), f"Invalid values for {key} in splits: {item}. Season not found in datadir."
+            assert key in ["train", "test", "validation"], "Unsupported key in splits."
+            assert len(item) > 0, f"Empty list for {key} in splits."
+            if key == "train":
+                train_set = item
+            elif key == "test":
+                test_set = item
+            else:
+                val_set = item
+
+    if train_set is not None:
+        train = []
+        for season in train_set:
+            train.extend(season_dict[season])
+
+    if val_set is not None:
+        validation = []
+        for season in val_set:
+            validation.extend(season_dict[season])
+
+    if test_set is not None:
+        test = []
+        for season in test_set:
+            test.extend(season_dict[season])
+
+    data_dict = {}
+    for dataset in ["train", "validation", "test"]:
+        setdata = {
+            "data": [],
+            "intensity_deltas": [],
+            "base_intensities": [],
+        }
+        for storm in eval(dataset):
+            # Get the 6 hourly timestamps
+            candidate_timestamps = pd.to_datetime(storm.timestamps)
+            # Filter to only include timestamps in 00h, 06h, 12h, 18h
+            candidate_timestamps = candidate_timestamps[
+                np.isin(candidate_timestamps.hour, [0, 6, 12, 18])
+            ].to_numpy()
+            try:
+                data, timestamps = storm.serve_timeseries_data(**kwargs)
+            except Exception as e:
+                print(f"Storm {str(storm)} produced no timeseries data. Skipping...")
+                # print the traceback if verbose
+                if kwargs.get("verbose", False):
+                    print(traceback.format_exc())
+                continue
+            if data is not None and (len(candidate_timestamps) > timeseries_steps):
+                rolling_timestamps = rolling_window(
+                    candidate_timestamps, timeseries_steps
+                )
+
+                bool_mask = np.all(np.isin(rolling_timestamps, timestamps), axis=1)
+                rolling_timestamps = rolling_timestamps[bool_mask]
+
+                # get the ground truth values for the intensities
+                intensity, time = storm.get_ground_truth(**kwargs)
+
+                # find the target times
+                target_times = time + np.timedelta64(delta_target, "h")
+                valid_mask = np.isin(time, target_times)
+                target_times = target_times[valid_mask]
+
+                # initiate a target intensity array with nans
+                target_intensities = np.full(
+                    (target_times.shape[0], intensity.shape[1]), np.nan
+                )
+
+                # Use the target times to find the corresponding intensities in the ground truth intensity
+                # mask = np.isin(time, target_times)
+                valid_mask = np.isin(target_times, time)
+                target_intensities[valid_mask] = intensity[np.isin(time, target_times)]
+
+                base_times = target_times - np.timedelta64(delta_target, "h")
+
+                # Let's initialize the base intensities with nans
+                base_intensities = np.full_like(target_intensities, np.nan)
+                mask = np.isin(time, base_times)
+
+                base_intensities = intensity[mask]
+
+                intensity_deltas = target_intensities - base_intensities
+
+                rolling_mask = np.isin(base_times, rolling_timestamps[:, -1])
+                rolling_base = base_intensities[rolling_mask]
+                rolling_delta = intensity_deltas[rolling_mask]
+
+                data_series = np.full(
+                    (*rolling_timestamps.shape, data.shape[1]), np.nan
+                )
+
+                for i in range(len(data_series)):
+                    mask = np.isin(timestamps, rolling_timestamps[i])
+                    data_series[i] = data[mask]
+
+                # Ensure no nans in output
+                data_check = np.any(np.any(np.isnan(data_series), axis=2), axis=1)
+                delta_check = np.any(np.isnan(rolling_delta), axis=1)
+                base_check = np.any(np.isnan(rolling_base), axis=1)
+                check = np.any(np.vstack([data_check, delta_check, base_check]), axis=0)
+
+                rolling_delta = rolling_delta[~check]
+                rolling_base = rolling_base[~check]
+                data_series = data_series[~check]
+
+                if data_series.shape[-1] != len(
+                    kwargs.get(
+                        "variables",
+                        constants.default_ships_vars,
+                    )
+                ):
+                    print(f"At least one empty variable in storm {storm}. Skipping...")
+                else:
+                    setdata["data"].append(data_series)
+                    setdata["intensity_deltas"].append(rolling_delta)
+                    setdata["base_intensities"].append(rolling_base)
+
+        setdata["data"] = np.vstack(setdata["data"])
+        setdata["intensity_deltas"] = np.vstack(setdata["intensity_deltas"])
+        setdata["base_intensities"] = np.vstack(setdata["base_intensities"])
+        data_dict[dataset] = setdata
+    return data_dict
 
 
 def get_sets(splits: dict, **kwargs):
@@ -934,16 +1183,17 @@ class tc_track:
             # Add alternate ID if available
             self.ALT_ID = kwargs.get("ALT_ID", None)
             self.datadir_path = kwargs.get(
-                "datadir_path", os.path.join(repo_path, "data")
+                "datadir_path", os.path.join(os.getcwd(), "data")
             )
             # Check to see if file exists for UID, if not, create it
             self.filepath = os.path.join(
                 self.datadir_path,
-                str(self.season),
+                # str(self.season),
             )
 
             if not os.path.exists(self.filepath):
-                print("Filepath for processed data does not exist. Creating...")
+                if kwargs.get("verbose", False):
+                    print("Filepath for processed data does not exist. Creating...")
                 os.makedirs(self.filepath)
             else:
                 # Get the filelist at the filepath
@@ -1021,11 +1271,15 @@ class tc_track:
         ):
             # if it is, save the ID into a variable
             atcf_id = self.ALT_ID
+        else:
+            raise ValueError(
+                f"Invalid ATCF ID format for storm {self.uid} with ALT_ID {self.ALT_ID}"
+            )
 
         # extract the data folder from the kwargs
         data_dir = kwargs.get(
             "timeseries_dir",
-            os.path.join(self.filepath, "SHIPS_netcdfs"),
+            os.path.join("/", *self.filepath.split("/")[:-1], "SHIPS_netcdfs"),
         )
 
         # Check if the dataset doesn't exist in the object
@@ -1056,8 +1310,11 @@ class tc_track:
             self.load_timeseries(**kwargs)
         pass
 
+        leadtime_min = kwargs.get("leadtime_min", -12)
+        leadtime_max = kwargs.get("leadtime_max", 0)
+
+        coord_array = np.array(self.timeseries_ds.coords)
         try:
-            coord_array = np.array(self.timeseries_ds.coords)
             time_coord = False
             for idx, coord in enumerate(coord_array):
                 if not time_coord:
@@ -1071,16 +1328,91 @@ class tc_track:
                         )
                         else False
                     )
+            if not time_coord:
+                raise ValueError("Time coordinate not found in dataset")
         except:
-            raise ValueError("Time coordinate not found in dataset")
+            raise ValueError("Error finding Time coordinate in dataset")
+
+        try:
+            ldt_coord = False
+            for idx, coord in enumerate(coord_array):
+                if not ldt_coord:
+                    ldt_coord = (
+                        coord_array[idx]
+                        if np.any(
+                            [
+                                valid_name in coord
+                                for valid_name in constants.valid_coords["leadtime"]
+                            ]
+                        )
+                        else False
+                    )
+            if not ldt_coord:
+                raise ValueError("Leadtime coordinate not found in dataset")
+        except:
+            raise ValueError("Error finding Leadtime coordinate in dataset")
 
         other_coords = coord_array[~np.isin(coord_array, time_coord)]
 
         ds = self.timeseries_ds.copy()
         if other_coords is not None:
             for coord in other_coords:
-                data = ds.where(~ds[coord].isnull(), drop=True)
-                print(f"Data shape: {data}")
+                if coord == ldt_coord:
+                    ds = ds.sel({ldt_coord: slice(leadtime_min, leadtime_max)})
+                ds = ds.where(~ds[coord].isnull(), drop=True)
+                if kwargs.get("verbose", False):
+                    print(f"Data shape: {ds}")
+
+        variables = kwargs.get(
+            "variables",
+            constants.default_ships_vars,
+        )
+
+        if "LHRD" in variables:
+            ds["LHRD"] = ds["SHDC"] * np.sin(np.radians(ds["lat"].astype(float)))
+
+        if "VSHR" in variables:
+            ds["VSHR"] = ds["VMAX"] * ds["SHDC"]
+
+        try:
+            ds = ds[variables]
+        except:
+            print(f"One or more variables missing from storm {self.uid}. Skipping...")
+            return None, None
+
+        data = None
+        for var in variables:
+            # Select only columns that have at least one non_nan
+            temp_data = (
+                ds[var].where(np.any(~ds[var].isnull(), axis=0), drop=True).values
+            )
+            if len(temp_data) == 0:
+                continue
+            if temp_data.ndim == 1:
+                temp_data = temp_data[np.newaxis, ...]
+
+            if data is None:
+                data = temp_data
+            else:
+                data = np.hstack([data, temp_data])
+        data = data.astype(float)
+
+        # Boolean mask to remove nans
+        bool_mask = np.any(np.isnan(data), axis=1)
+        data = data[~bool_mask]
+
+        timestamps = ds[time_coord].values[~bool_mask]
+
+        if kwargs.get("verbose", False):
+            print(
+                f"A total of {len(variables)} variables were loaded for storm ",
+                f"{self.uid} with shape {data.shape}. {bool_mask.sum()} nan rows",
+                f" were removed.",
+                sep="",
+                flush=True,
+            )
+
+        return data, timestamps
 
     def get_rectmask(self, point, **kwargs):
         # read in parameters if submitted, otherwise use defaults
@@ -1941,7 +2273,9 @@ class tc_track:
 
                 # load saved files into dask arrays
                 X = da.from_array(
-                    np.load(os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"),
+                    np.load(
+                        os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"
+                    ),
                     chunks=(32, 5, 241, 241),
                 )
                 Y = da.from_array(

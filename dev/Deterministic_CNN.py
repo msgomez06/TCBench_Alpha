@@ -12,6 +12,7 @@ from sklearn.preprocessing import StandardScaler
 import torch
 import dask
 import multiprocessing
+
 # from dask import optimize
 import time
 
@@ -22,17 +23,22 @@ import joblib as jl
 from utils import toolbox, ML_functions as mlf
 import metrics
 
+# Importing the sklearn metrics
+from sklearn.metrics import root_mean_squared_error, mean_absolute_error
+
 if __name__ == "__main__":
     print("Imports successful", flush=True)
 
-    #check if the context has been set for torch multiprocessing
+    # check if the context has been set for torch multiprocessing
     if not torch.multiprocessing.get_start_method(allow_none=True) == "spawn":
         torch.multiprocessing.set_start_method("spawn")
 
     #  Setup
     datadir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha"
     cache_dir = "/scratch/mgomezd1/cache"
-    result_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/"
+    result_dir = (
+        "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/"
+    )
 
     # Check for GPU availability
     if torch.cuda.device_count() > 0:
@@ -55,7 +61,11 @@ if __name__ == "__main__":
     print("Loading datasets...", flush=True)
 
     sets, data = toolbox.get_sets(
-        {"train": years[:-2], "validation": years[-2:], "test": [2020],},
+        {
+            "train": years[:-2],
+            "validation": years[-2:],
+            "test": [2020],
+        },
         datadir=datadir,
         test_strategy="custom",
         # use_cached=False,
@@ -120,7 +130,7 @@ if __name__ == "__main__":
     #  Dataloader & Hyperparameters
 
     # Let's define some hyperparameters
-    batch_size = 64
+    batch_size = 128
     loss_func = torch.nn.MSELoss()
     num_workers = (
         int(num_cores * 2 / 3)
@@ -163,10 +173,7 @@ if __name__ == "__main__":
     # And make the respective dataloaders
     print("Creating dataloaders...", flush=True)
     train_loader = mlf.make_dataloader(
-        train_dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
-        num_workers=num_workers
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
     )
     validation_loader = mlf.make_dataloader(
         validation_dataset,
@@ -176,41 +183,23 @@ if __name__ == "__main__":
     )
 
     #  Model
-
     # We begin by instantiating our baseline model
     # CNN = baselines.TC_DeltaIntensity_CNN(deterministic=True).to(calc_device)
     # CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
-    CNN = baselines.Regularized_Dilated_CNN(deterministic=True, dropout=0.1, dropout2d=0.1).to(calc_device)
+    CNN = baselines.Regularized_NonDil_CNN(
+        deterministic=True, dropout=0.1, dropout2d=0.1
+    ).to(calc_device)
 
     optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-3, weight_decay=1e-4)
-    num_epochs = 30
-    patience = 4
-    bias_threshold = 10 # stop if validation loss / train loss > bias_threshold
+    num_epochs = 100
+    patience = 4  # stop if validation loss increases for patience epochs
+    bias_threshold = 15  # stop if validation loss / train loss > bias_threshold
 
     #  Training
 
     # multiprocessing.set_start_method('spawn', force=True)
     train_losses = []
     val_losses = []
-
-    # def eval_model(model, dataloader, loss_func, metric_func):
-    #     with torch.no_grad():
-    #         loss = 0
-    #         metric = 0
-
-    #         for AI_X, base_int, target in dataloader:
-    #             pred = model(AI_X, base_int)
-    #             batch_loss = loss_func(pred, target)
-    #             batch_metric = metric_func(pred, target)
-
-    #             loss += batch_loss.item()
-    #             metric += batch_metric.item()
-
-    #         num_batches = len(dataloader)
-
-    #         loss = loss / num_batches
-    #         metric = metric / num_batches
-    #         return (loss, metric)
 
     print("Model Training started...", flush=True)
     start_time = time.strftime("%m-%d-%Hh%M")
@@ -266,10 +255,15 @@ if __name__ == "__main__":
         val_loss = val_loss / len(validation_loader)
         val_losses.append(val_loss)
 
-        # Save if the NSE is the maximum in our model training history
+        # Save if the validation loss is the best so far
         if val_loss <= max(val_losses):
-            torch.save(CNN, os.path.join(result_dir, f"best_model_{str(CNN)}_{start_time}_epoch-{i}.pt"))
-            
+            torch.save(
+                CNN,
+                os.path.join(
+                    result_dir, f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}.pt"
+                ),
+            )
+
         print(
             f"\nEpoch: {epoch+1}/{num_epochs},",
             f"train_loss: {train_loss},",
@@ -281,13 +275,18 @@ if __name__ == "__main__":
         # Early stopping
         # Stop if the validation loss is greater than all previous patience epochs
         if epoch > patience:
-            if all(val_loss > x for x in val_losses[-patience:]) or val_loss / train_loss > bias_threshold:
+            if (
+                all(val_loss > x for x in val_losses[-patience:])
+                or val_loss / train_loss > bias_threshold
+            ):
                 print(f"Early stopping at epoch {epoch+1}")
                 break
 
         # Let's save the train and validation losses in a pickled dictionary
         losses = {"train": train_losses, "validation": val_losses}
-        with open(os.path.join(result_dir, f"CNN_{str(CNN)}_losses_{start_time}.pkl"), "wb") as f:
+        with open(
+            os.path.join(result_dir, f"CNN_{str(CNN)}_losses_{start_time}.pkl"), "wb"
+        ) as f:
             pickle.dump(losses, f)
 
     # Predict the validation data with the CNN model
@@ -299,21 +298,18 @@ if __name__ == "__main__":
                 y_hat = pred.cpu().numpy()
             else:
                 y_hat = np.concatenate([y_hat, pred.cpu().numpy()])
-    
-    y_hat = y_hat + data["validation"]["base_intensity"].compute()
-    
+
     #  Baseline
 
     # We want to compare the model to a simple baseline, in this case
-    # the persistence model. Note that this is simply the base intensity
-    # we're predicting the delta for.
-    y_persistence = data["validation"]["base_intensity"]
+    # the persistence model. Since our target is delta, persistence
+    # is simply 0
+    y_persistence = np.zeros_like(valid_delta)
 
     #  Evaluation
-
     # Let's start by loading the validation outputs into a variable
     # for easier access
-    y_true = data["validation"]["outputs"]
+    y_true = valid_delta
 
     #  Compute y_true, y_hat, y_persistence
     y_true = y_true.compute()
@@ -324,16 +320,13 @@ if __name__ == "__main__":
     # the Mean Absolute Error, as well as the associated skill scores compared
     # to the persistence model
 
-    # Importing the metrics
-    from sklearn.metrics import root_mean_squared_error, mean_absolute_error
-
     global_performance = metrics.summarize_performance(
         y_true,  # Ground truth
         y_hat,  # Model prediction
         y_persistence,  # Baseline, used for skill score calculations
         [root_mean_squared_error, mean_absolute_error],
     )
-    #
+
     # Plotting Global Performance
     fig, axes = plt.subplots(
         1, 2, figsize=(15, 5), dpi=150, gridspec_kw={"width_ratios": [2, 1]}
@@ -343,7 +336,11 @@ if __name__ == "__main__":
     )
     toolbox.plot_facecolors(fig=fig, axes=axes)
     # Save the figure in the results directory
-    fig.savefig(os.path.join(result_dir, f"CNN_global_performance_{str(CNN)}_{start_time}.png"))
+    fig.savefig(
+        os.path.join(
+            result_dir, f"CNN_global_performance_{str(CNN)}_{start_time}_validation.png"
+        )
+    )
 
     # Let's also go ahead and do the analysis per lead time
     unique_leads = np.unique(data["validation"]["leadtime"].compute())
@@ -380,6 +377,88 @@ if __name__ == "__main__":
         # Append the lead time to the title for both axes
         axes[idx][0].set_title(f"\n Lead Time: +{lead}h \n" + axes[idx][0].get_title())
         axes[idx][1].set_title(f"\n Lead Time: +{lead}h \n" + axes[idx][1].get_title())
-    
+
     # Save the figure in the results directory
-    fig.savefig(os.path.join(result_dir, f"CNN_lead_performance_{str(CNN)}_{start_time}.png"))
+    fig.savefig(
+        os.path.join(
+            result_dir, f"CNN_lead_performance_{str(CNN)}_{start_time}_validation.png"
+        )
+    )
+
+    # Let's also make the same plots for the training data
+    with torch.no_grad():
+        y_hat = None
+        for AI_X, base_int, target in train_loader:
+            pred = CNN(AI_X, base_int)
+            if y_hat is None:
+                y_hat = pred.cpu().numpy()
+            else:
+                y_hat = np.concatenate([y_hat, pred.cpu().numpy()])
+
+    y_true = train_delta.compute()
+    y_persistence = np.zeros_like(y_true)
+
+    global_performance = metrics.summarize_performance(
+        y_true,  # Ground truth
+        y_hat,  # Model prediction
+        y_persistence,  # Baseline, used for skill score calculations
+        [root_mean_squared_error, mean_absolute_error],
+    )
+
+    # Plotting Global Performance
+    fig, axes = plt.subplots(
+        1, 2, figsize=(15, 5), dpi=150, gridspec_kw={"width_ratios": [2, 1]}
+    )
+    metrics.plot_performance(
+        global_performance, axes, model_name="MLR", baseline_name="Persistence"
+    )
+    toolbox.plot_facecolors(fig=fig, axes=axes)
+    # Save the figure in the results directory
+    fig.savefig(
+        os.path.join(
+            result_dir, f"CNN_global_performance_{str(CNN)}_{start_time}_training.png"
+        )
+    )
+
+    # Let's also go ahead and do the analysis per lead time
+    unique_leads = np.unique(data["train"]["leadtime"].compute())
+    num_leads = len(unique_leads)
+
+    # set up the axes for the lead time plots
+
+    fig, axes = plt.subplots(
+        num_leads,  # One row per lead time
+        2,
+        figsize=(15, 5 * num_leads),
+        dpi=150,
+        gridspec_kw={"width_ratios": [2, 1]},
+    )
+    for idx, lead in enumerate(unique_leads):
+        lead_mask = data["train"]["leadtime"] == lead
+
+        y_true_lead = y_true[lead_mask]
+        y_hat_lead = y_hat[lead_mask]
+        y_persistence_lead = y_persistence[lead_mask]
+
+        lead_performance = metrics.summarize_performance(
+            y_true_lead,  # Ground truth
+            y_hat_lead,  # Model prediction
+            y_persistence_lead,  # Baseline, used for skill score calculations
+            [root_mean_squared_error, mean_absolute_error],
+        )
+
+        metrics.plot_performance(
+            lead_performance, axes[idx], model_name="MLR", baseline_name="Persistence"
+        )
+        toolbox.plot_facecolors(fig=fig, axes=axes[idx])
+
+        # Append the lead time to the title for both axes
+        axes[idx][0].set_title(f"\n Lead Time: +{lead}h \n" + axes[idx][0].get_title())
+        axes[idx][1].set_title(f"\n Lead Time: +{lead}h \n" + axes[idx][1].get_title())
+
+    # Save the figure in the results directory
+    fig.savefig(
+        os.path.join(
+            result_dir, f"CNN_lead_performance_{str(CNN)}_{start_time}_training.png"
+        )
+    )

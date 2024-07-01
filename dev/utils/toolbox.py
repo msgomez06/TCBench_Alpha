@@ -263,7 +263,6 @@ def get_coord_vars(dataset):
     coord_array = np.array(dataset.coords)
 
     for idx, coord in enumerate(coord_array):
-
         # retrieve the longitude coordinate if available
         if not lon_coord:
             lon_coord = (
@@ -443,7 +442,6 @@ def get_TC_seasons(
 
 
 def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
-
     assert isinstance(
         splits, dict
     ), f"Invalid type for splits: {type(splits)}. Expected dict"
@@ -502,7 +500,9 @@ def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
             other_seasons = np.setdiff1d(available_seasons, test_set)
             if "validation" in splits.keys():
                 val_size = int(np.ceil(splits["validation"] * len(available_seasons)))
-                val_set = random_generator.choice(other_seasons, val_size, replace=False)
+                val_set = random_generator.choice(
+                    other_seasons, val_size, replace=False
+                )
                 train_set = np.setdiff1d(other_seasons, val_set)
             else:
                 if splits["test"] + splits["train"] < 1:
@@ -512,7 +512,9 @@ def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
                     else:
                         round_func = np.ceil
                     val_size = int(round_func(validation_size * len(available_seasons)))
-                    val_set = random_generator.choice(other_seasons, val_size, replace=False)
+                    val_set = random_generator.choice(
+                        other_seasons, val_size, replace=False
+                    )
                     train_set = np.setdiff1d(other_seasons, val_set)
                 else:
                     train_set = other_seasons
@@ -586,7 +588,7 @@ def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
                 np.isin(candidate_timestamps.hour, [0, 6, 12, 18])
             ].to_numpy()
             try:
-                data, timestamps = storm.serve_timeseries_data(**kwargs)
+                data, timestamps = storm.timeseries.serve(**kwargs)
             except Exception as e:
                 print(f"Storm {str(storm)} produced no timeseries data. Skipping...")
                 # print the traceback if verbose
@@ -670,7 +672,7 @@ def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
     return data_dict
 
 
-def get_sets(splits: dict, **kwargs):
+def get_ai_sets(splits: dict, **kwargs):
     """
     Function to retrieve the training, validation, and testing set for TC tracks.
     The function will return a list of TC_tracks and a dictionary with the information
@@ -845,7 +847,7 @@ def get_sets(splits: dict, **kwargs):
                         print(f"Processing {season}", end="", flush=True)
 
                         def processor(storm, **kwargs):
-                            result = storm.serve_ai_data(**kwargs)
+                            result = storm.ai.serve(**kwargs)
 
                             if (
                                 kwargs.get("base_intensity", True)
@@ -1143,8 +1145,7 @@ def sanitize_timestamps(timestamps, data, time_coord="time"):
 #         return None
 
 
-# %%
-# Class used to process track file and instantiate a track per event
+# %% Class Definitions
 
 
 # Class presenting tracks
@@ -1190,6 +1191,20 @@ class tc_track:
                 self.datadir_path,
                 # str(self.season),
             )
+
+            # get the valid kwargs for the timeseries
+            valid_kwargs = {
+                key: kwargs.get(key, timeseries._timeseries__default_vals.get(key))
+                for key in timeseries._timeseries__valid_kwargs
+            }
+            self.timeseries = timeseries(parent=self, **valid_kwargs)
+
+            # get the valid kwargs for the AI data
+            valid_kwargs = {
+                key: kwargs.get(key, AI._AI__default_vals.get(key))
+                for key in AI._AI__valid_kwargs
+            }
+            self.ai = AI(parent=self, **valid_kwargs)
 
             if not os.path.exists(self.filepath):
                 if kwargs.get("verbose", False):
@@ -1254,165 +1269,6 @@ class tc_track:
             )
             <= radius
         ).T[np.newaxis, :, :]
-
-    def load_timeseries(self, **kwargs):
-        # check if the UID or the ALT_ID is in the ATCF format
-        if (
-            self.uid[0:2].isalpha()
-            and self.uid[0:2].isupper()
-            and self.uid[2:6].isdigit()
-        ):
-            # if it is, save the ID into a variable
-            atcf_id = self.uid
-        elif (
-            self.ALT_ID[0:2].isalpha()
-            and self.ALT_ID[0:2].isupper()
-            and self.ALT_ID[2:6].isdigit()
-        ):
-            # if it is, save the ID into a variable
-            atcf_id = self.ALT_ID
-        else:
-            raise ValueError(
-                f"Invalid ATCF ID format for storm {self.uid} with ALT_ID {self.ALT_ID}"
-            )
-
-        # extract the data folder from the kwargs
-        data_dir = kwargs.get(
-            "timeseries_dir",
-            os.path.join("/", *self.filepath.split("/")[:-1], "SHIPS_netcdfs"),
-        )
-
-        # Check if the dataset doesn't exist in the object
-        if not hasattr(self, f"timeseries_ds"):
-            # Check if the dataset exists on disk
-            ds_path = os.path.join(data_dir, f"{atcf_id}.nc")
-
-            if os.path.exists(ds_path):
-                # If it does, load the dataset
-                # print("Loading dataset...")
-                setattr(
-                    self,
-                    "timeseries_ds",
-                    xr.open_dataset(ds_path),
-                )
-            else:
-                # Raise file not found error
-                print(
-                    f"Time series storm data for storm {self.uid} with ATCF_ID {atcf_id} not found in timeseries directory {data_dir}"
-                )
-                raise FileNotFoundError(f"{ds_path} not found")
-        pass
-
-    def serve_timeseries_data(self, **kwargs):
-        # Check if the dataset doesn't exist in the object
-        if not hasattr(self, f"timeseries_ds"):
-            # if it doesnt, try loading it
-            self.load_timeseries(**kwargs)
-        pass
-
-        leadtime_min = kwargs.get("leadtime_min", -12)
-        leadtime_max = kwargs.get("leadtime_max", 0)
-
-        coord_array = np.array(self.timeseries_ds.coords)
-        try:
-            time_coord = False
-            for idx, coord in enumerate(coord_array):
-                if not time_coord:
-                    time_coord = (
-                        coord_array[idx]
-                        if np.any(
-                            [
-                                valid_name == coord
-                                for valid_name in constants.valid_coords["time"]
-                            ]
-                        )
-                        else False
-                    )
-            if not time_coord:
-                raise ValueError("Time coordinate not found in dataset")
-        except:
-            raise ValueError("Error finding Time coordinate in dataset")
-
-        try:
-            ldt_coord = False
-            for idx, coord in enumerate(coord_array):
-                if not ldt_coord:
-                    ldt_coord = (
-                        coord_array[idx]
-                        if np.any(
-                            [
-                                valid_name in coord
-                                for valid_name in constants.valid_coords["leadtime"]
-                            ]
-                        )
-                        else False
-                    )
-            if not ldt_coord:
-                raise ValueError("Leadtime coordinate not found in dataset")
-        except:
-            raise ValueError("Error finding Leadtime coordinate in dataset")
-
-        other_coords = coord_array[~np.isin(coord_array, time_coord)]
-
-        ds = self.timeseries_ds.copy()
-        if other_coords is not None:
-            for coord in other_coords:
-                if coord == ldt_coord:
-                    ds = ds.sel({ldt_coord: slice(leadtime_min, leadtime_max)})
-                ds = ds.where(~ds[coord].isnull(), drop=True)
-                if kwargs.get("verbose", False):
-                    print(f"Data shape: {ds}")
-
-        variables = kwargs.get(
-            "variables",
-            constants.default_ships_vars,
-        )
-
-        if "LHRD" in variables:
-            ds["LHRD"] = ds["SHDC"] * np.sin(np.radians(ds["lat"].astype(float)))
-
-        if "VSHR" in variables:
-            ds["VSHR"] = ds["VMAX"] * ds["SHDC"]
-
-        try:
-            ds = ds[variables]
-        except:
-            print(f"One or more variables missing from storm {self.uid}. Skipping...")
-            return None, None
-
-        data = None
-        for var in variables:
-            # Select only columns that have at least one non_nan
-            temp_data = (
-                ds[var].where(np.any(~ds[var].isnull(), axis=0), drop=True).values
-            )
-            if len(temp_data) == 0:
-                continue
-            if temp_data.ndim == 1:
-                temp_data = temp_data[np.newaxis, ...]
-
-            if data is None:
-                data = temp_data
-            else:
-                data = np.hstack([data, temp_data])
-        data = data.astype(float)
-
-        # Boolean mask to remove nans
-        bool_mask = np.any(np.isnan(data), axis=1)
-        data = data[~bool_mask]
-
-        timestamps = ds[time_coord].values[~bool_mask]
-
-        if kwargs.get("verbose", False):
-            print(
-                f"A total of {len(variables)} variables were loaded for storm ",
-                f"{self.uid} with shape {data.shape}. {bool_mask.sum()} nan rows",
-                f" were removed.",
-                sep="",
-                flush=True,
-            )
-
-        return data, timestamps
 
     def get_rectmask(self, point, **kwargs):
         # read in parameters if submitted, otherwise use defaults
@@ -1515,7 +1371,6 @@ class tc_track:
 
     # @profile
     def process_data_collection(self, data_collection, **kwargs):
-
         # Function to add all variables from a data collection object
         # to the track object
         assert isinstance(data_collection, data_lib.Data_Collection) or isinstance(
@@ -1555,7 +1410,6 @@ class tc_track:
                         ), f"Missing variable data for {year}"
 
                     for var in var_list:
-
                         ##TODO: check if file exsits and if it does, check if the variable is already in the file
                         # if it is, skip it
 
@@ -1568,9 +1422,13 @@ class tc_track:
                         print(var_data)
 
                         # get coordinate names
-                        lat_coord, lon_coord, time_coord, level_coord, _ = (
-                            get_coord_vars(var_data)
-                        )
+                        (
+                            lat_coord,
+                            lon_coord,
+                            time_coord,
+                            level_coord,
+                            _,
+                        ) = get_coord_vars(var_data)
 
                         print(f"Adding {var} to {self.uid}...")
 
@@ -1729,9 +1587,13 @@ class tc_track:
                 # to only include 3 hourly data
                 ds = data_collection.retrieve_ds(self.timestamps, **kwargs)
 
-                lat_coord, lon_coord, time_coord, level_coord, leadtime_coord = (
-                    get_coord_vars(ds)
-                )
+                (
+                    lat_coord,
+                    lon_coord,
+                    time_coord,
+                    level_coord,
+                    leadtime_coord,
+                ) = get_coord_vars(ds)
 
                 vars_to_keep = kwargs.get(
                     "vars_to_keep",
@@ -2057,252 +1919,257 @@ class tc_track:
                         " with a data collection object as an argument."
                     )
 
-    def load_ai_data(self, **kwargs):
-        """
-        Function to load the AI data from storage
+    # def load_ai_data(self, **kwargs):
+    #     """
+    #     Function to load the AI data from storage
 
-        Parameters
-        ----------
-        None
+    #     Parameters
+    #     ----------
+    #     None
 
-        Returns
-        -------
-        None
+    #     Returns
+    #     -------
+    #     None
 
-        """
-        ai_model = kwargs.get("ai_model", "panguweather")
-        if kwargs.get("verbose", False):
-            print(f"Loading {ai_model} forecast data for {self.uid}...")
-        # Check if the dataset doesn't exist in the object
-        if not hasattr(self, "AI_ds"):
-            # Check if the dataset exists on disk
-            path = os.path.join(self.filepath, f"{self.uid}.AI.{ai_model}.nc")
-            if os.path.exists(path):
-                # If it does, load the dataset
-                # print("Loading dataset...")
-                setattr(self, "AI_ds", xr.open_dataset(path))
-            else:
-                if kwargs.get("verbose", False) or kwargs.get("debug", False):
-                    print(f"Dataset {self.uid}.AI.{ai_model}.nc not found on disk")
-                    print(
-                        'You can create the dataset by running the "process_data_collection" method'
-                        " with an AI data collection object as an argument."
-                    )
+    #     """
+    #     ai_model = kwargs.get("ai_model", "panguweather")
+    #     if kwargs.get("verbose", False):
+    #         print(f"Loading {ai_model} forecast data for {self.uid}...")
+    #     # Check if the dataset doesn't exist in the object
+    #     if not hasattr(self, "AI_ds"):
+    #         # Check if the dataset exists on disk
+    #         path = os.path.join(
+    #             self.datadir_path, str(self.season), f"{self.uid}.AI.{ai_model}.nc"
+    #         )
+    #         if os.path.exists(path):
+    #             # If it does, load the dataset
+    #             # print("Loading dataset...")
+    #             setattr(self, "AI_ds", xr.open_dataset(path))
+    #         else:
+    #             if kwargs.get("verbose", False) or kwargs.get("debug", False):
+    #                 print(f"Dataset {self.uid}.AI.{ai_model}.nc not found on disk")
+    #                 print(
+    #                     'You can create the dataset by running the "process_data_collection" method'
+    #                     " with an AI data collection object as an argument."
+    #                 )
 
-    def serve_ai_data(self, **kwargs):
-        try:
-            # check if the cache dir exists
-            cache_dtype = kwargs.get("cache_dtype", float)
-            cache_dir = kwargs.get(
-                "cache_dir", os.path.join(self.datadir_path, "cache")
-            )
-            load_from_cache = kwargs.get("use_cached", True)
-            ai_model = kwargs.get("ai_model", "panguweather")
+    # def serve_ai_data(self, **kwargs):
+    #     try:
+    #         # check if the cache dir exists
+    #         cache_dtype = kwargs.get("cache_dtype", float)
+    #         cache_dir = kwargs.get(
+    #             "cache_dir", os.path.join(self.datadir_path, "cache")
+    #         )
+    #         load_from_cache = kwargs.get("use_cached", True)
+    #         ai_model = kwargs.get("ai_model", "panguweather")
 
-            if os.path.exists(cache_dir) and load_from_cache:
-                try:
-                    # check if the cache files exist. If they don't exist, continue
-                    if not all(
-                        [
-                            os.path.exists(
-                                os.path.join(cache_dir, f"{self.uid}_{file}.npy")
-                            )
-                            for file in ["X", "Y", "t", "leads"]
-                        ]
-                    ):
-                        raise FileNotFoundError(
-                            "Cache files not found. Rebuilding cache..."
-                        )
+    #         if os.path.exists(cache_dir) and load_from_cache:
+    #             try:
+    #                 # check if the cache files exist. If they don't exist, continue
+    #                 if not all(
+    #                     [
+    #                         os.path.exists(
+    #                             os.path.join(cache_dir, f"{self.uid}_{file}.npy")
+    #                         )
+    #                         for file in ["X", "Y", "t", "leads"]
+    #                     ]
+    #                 ):
+    #                     raise FileNotFoundError(
+    #                         "Cache files not found. Rebuilding cache..."
+    #                     )
 
-                    # load the files into dask arrays
-                    X = da.from_array(
-                        np.load(
-                            os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"
-                        ),
-                        chunks=(32, 5, 241, 241),
-                    )
-                    Y = da.from_array(
-                        np.load(
-                            os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r"
-                        )
-                    )
-                    t = da.from_array(
-                        np.load(
-                            os.path.join(cache_dir, f"{self.uid}_t.npy"), mmap_mode="r"
-                        )
-                    )
-                    leads = da.from_array(
-                        np.load(
-                            os.path.join(cache_dir, f"{self.uid}_leads.npy"),
-                            mmap_mode="r",
-                        )
-                    )
-                    if kwargs.get("verbose", False):
-                        print(
-                            f"Succesfully loaded cache files for {self.uid} from cache...",
-                            flush=True,
-                        )
+    #                 # load the files into dask arrays
+    #                 X = da.from_array(
+    #                     np.load(
+    #                         os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"
+    #                     ),
+    #                     chunks=(32, 5, 241, 241),
+    #                 )
+    #                 Y = da.from_array(
+    #                     np.load(
+    #                         os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r"
+    #                     )
+    #                 )
+    #                 t = da.from_array(
+    #                     np.load(
+    #                         os.path.join(cache_dir, f"{self.uid}_t.npy"), mmap_mode="r"
+    #                     )
+    #                 )
+    #                 leads = da.from_array(
+    #                     np.load(
+    #                         os.path.join(cache_dir, f"{self.uid}_leads.npy"),
+    #                         mmap_mode="r",
+    #                     )
+    #                 )
+    #                 if kwargs.get("verbose", False):
+    #                     print(
+    #                         f"Succesfully loaded cache files for {self.uid} from cache...",
+    #                         flush=True,
+    #                     )
 
-                    return X, Y, t, leads
-                except Exception as e:
-                    if kwargs.get("debug", False):
-                        print(
-                            f"Error loading cache files for {self.uid}. Rebuilding cache..."
-                        )
-                        if kwargs.get("verbose", False):
-                            print(e)
-            else:
-                if not os.path.exists(cache_dir):
-                    os.makedirs(cache_dir)
+    #                 return X, Y, t, leads
+    #             except Exception as e:
+    #                 if kwargs.get("debug", False):
+    #                     print(
+    #                         f"Error loading cache files for {self.uid}. Rebuilding cache..."
+    #                     )
+    #                     if kwargs.get("verbose", False):
+    #                         print(e)
+    #         else:
+    #             if not os.path.exists(cache_dir):
+    #                 os.makedirs(cache_dir)
 
-            if kwargs.get("verbose", False) and kwargs.get("use_cached", True):
-                print(
-                    f"used_chached disabled or cache files not found for {self.uid}. Rebuilding cache..."
-                )
+    #         if kwargs.get("verbose", False) and kwargs.get("use_cached", True):
+    #             print(
+    #                 f"used_chached disabled or cache files not found for {self.uid}. Rebuilding cache..."
+    #             )
 
-            # Check if the dataset doesn't exist in the object
+    #         # Check if the dataset doesn't exist in the object
 
-            if not hasattr(self, "AI_ds"):
-                # if it doesnt, try loading it
-                self.load_ai_data(**kwargs)
+    #         if not hasattr(self, "AI_ds"):
+    #             # if it doesnt, try loading it
+    #             self.load_ai_data(**kwargs)
 
-            assert hasattr(
-                self, "AI_ds"
-            ), f"AI dataset not found for {self.uid} with model {ai_model}"
+    #         assert hasattr(
+    #             self, "AI_ds"
+    #         ), f"AI dataset not found for {self.uid} with model {ai_model}"
 
-            lat_coord, lon_coord, time_coord, level_coord, leadtime_coord = (
-                get_coord_vars(self.AI_ds)
-            )
+    #         (
+    #             lat_coord,
+    #             lon_coord,
+    #             time_coord,
+    #             level_coord,
+    #             leadtime_coord,
+    #         ) = get_coord_vars(self.AI_ds)
 
-            # Get ground truth and valid timestamps
-            gt, stamps = self.get_ground_truth(**kwargs)
+    #         # Get ground truth and valid timestamps
+    #         gt, stamps = self.get_ground_truth(**kwargs)
 
-            valid_stamps = sanitize_timestamps(stamps, self.AI_ds, time_coord)
+    #         valid_stamps = sanitize_timestamps(stamps, self.AI_ds, time_coord)
 
-            gt = gt[np.isin(stamps, valid_stamps)]
-            stamps = stamps[np.isin(stamps, valid_stamps)]
+    #         gt = gt[np.isin(stamps, valid_stamps)]
+    #         stamps = stamps[np.isin(stamps, valid_stamps)]
 
-            if len(gt) == 0:
-                if kwargs.get("verbose", False) or kwargs.get("debug", False):
-                    print(
-                        f"No valid timestamps found for {self.uid} with model {ai_model}"
-                    )
-                return
+    #         if len(gt) == 0:
+    #             if kwargs.get("verbose", False) or kwargs.get("debug", False):
+    #                 print(
+    #                     f"No valid timestamps found for {self.uid} with model {ai_model}"
+    #                 )
+    #             return
 
-            # Get the AI data
-            inputs = None
-            targets = None
-            outstamps = None
-            out_leads = None
-            for stamp in stamps:
+    #         # Get the AI data
+    #         inputs = None
+    #         targets = None
+    #         outstamps = None
+    #         out_leads = None
+    #         for stamp in stamps:
+    #             temp_ds = self.AI_ds.sel({time_coord: stamp})
+    #             temp_ds = temp_ds.where(~temp_ds.isnull(), drop=True)
 
-                temp_ds = self.AI_ds.sel({time_coord: stamp})
-                temp_ds = temp_ds.where(~temp_ds.isnull(), drop=True)
+    #             timedeltas = temp_ds[leadtime_coord].values.astype("timedelta64[h]")
+    #             leadtimes = stamp + timedeltas
 
-                timedeltas = temp_ds[leadtime_coord].values.astype("timedelta64[h]")
-                leadtimes = stamp + timedeltas
+    #             # make a boolean index to see what leadtime data we have a
+    #             # truth value for
+    #             bool_idx = np.isin(leadtimes, stamps)
 
-                # make a boolean index to see what leadtime data we have a
-                # truth value for
-                bool_idx = np.isin(leadtimes, stamps)
+    #             out_data = temp_ds.isel({leadtime_coord: bool_idx}).to_array().values
+    #             out_data = np.moveaxis(out_data, 0, 1)
+    #             out_targets = gt[np.isin(stamps, leadtimes[bool_idx])]
+    #             # base_targets = gt[stamps == stamp]
+    #             temp_stamps = leadtimes[bool_idx]
+    #             temp_leads = temp_ds.isel({leadtime_coord: bool_idx})[
+    #                 leadtime_coord
+    #             ].values
 
-                out_data = temp_ds.isel({leadtime_coord: bool_idx}).to_array().values
-                out_data = np.moveaxis(out_data, 0, 1)
-                out_targets = gt[np.isin(stamps, leadtimes[bool_idx])]
-                # base_targets = gt[stamps == stamp]
-                temp_stamps = leadtimes[bool_idx]
-                temp_leads = temp_ds.isel({leadtime_coord: bool_idx})[
-                    leadtime_coord
-                ].values
+    #             if outstamps is None:
+    #                 try:
+    #                     ##TODO: The following check appears to be and issue
+    #                     ## with the way the data is being filtered when processing
+    #                     ## the storm fields. My guess is that this is due to the
+    #                     ## crossing of the 0° longitude line. This should be fixed
+    #                     ## process_data_collection method.
 
-                if outstamps is None:
-                    try:
-                        ##TODO: The following check appears to be and issue
-                        ## with the way the data is being filtered when processing
-                        ## the storm fields. My guess is that this is due to the
-                        ## crossing of the 0° longitude line. This should be fixed
-                        ## process_data_collection method.
+    #                     if out_data.shape[-2:] != (
+    #                         241,
+    #                         241,
+    #                     ):
+    #                         raise ValueError(
+    #                             f"Invalid shape for stamp {stamp}... Skipping..."
+    #                         )
+    #                     else:
+    #                         inputs = out_data
+    #                         targets = out_targets
+    #                         outstamps = temp_stamps  # leadtimes[bool_idx]
+    #                         # base_stamps = np.full_like(outstamps, stamp)
+    #                         out_leads = temp_leads
 
-                        if out_data.shape[-2:] != (
-                            241,
-                            241,
-                        ):
-                            raise ValueError(
-                                f"Invalid shape for stamp {stamp}... Skipping..."
-                            )
-                        else:
-                            inputs = out_data
-                            targets = out_targets
-                            outstamps = temp_stamps  # leadtimes[bool_idx]
-                            # base_stamps = np.full_like(outstamps, stamp)
-                            out_leads = temp_leads
+    #                 except ValueError as e:
+    #                     if kwargs.get("verbose", False):
+    #                         print(f"Problem processing {stamp}... Skipping...")
+    #                         print(e)
+    #             else:
+    #                 try:
+    #                     if out_data.shape[-2:] != (241, 241):
+    #                         raise ValueError(
+    #                             f"Invalid shape for stamp {stamp}... Skipping..."
+    #                         )
+    #                     else:
+    #                         inputs = np.vstack([inputs, out_data])
+    #                         targets = np.vstack([targets, out_targets])
+    #                         outstamps = np.hstack([outstamps, temp_stamps])
+    #                         out_leads = np.hstack([out_leads, temp_leads])
 
-                    except ValueError as e:
-                        if kwargs.get("verbose", False):
-                            print(f"Problem processing {stamp}... Skipping...")
-                            print(e)
-                else:
-                    try:
-                        if out_data.shape[-2:] != (241, 241):
-                            raise ValueError(
-                                f"Invalid shape for stamp {stamp}... Skipping..."
-                            )
-                        else:
-                            inputs = np.vstack([inputs, out_data])
-                            targets = np.vstack([targets, out_targets])
-                            outstamps = np.hstack([outstamps, temp_stamps])
-                            out_leads = np.hstack([out_leads, temp_leads])
+    #                     # outstamps = np.hstack([outstamps, leadtimes[bool_idx]])
+    #                     # out_leads = np.hstack(
+    #                     #     [out_leads, temp_ds[leadtime_coord].values[bool_idx]]
+    #                     # )
 
-                        # outstamps = np.hstack([outstamps, leadtimes[bool_idx]])
-                        # out_leads = np.hstack(
-                        #     [out_leads, temp_ds[leadtime_coord].values[bool_idx]]
-                        # )
+    #                 except ValueError as e:
+    #                     if kwargs.get("verbose", False):
+    #                         print(f"Problem processing {stamp}... Skipping...")
+    #                         print(e)
 
-                    except ValueError as e:
-                        if kwargs.get("verbose", False):
-                            print(f"Problem processing {stamp}... Skipping...")
-                            print(e)
+    #         # save if the data is not empty
+    #         if inputs is not None:
+    #             # save the data to the cache
+    #             np.save(os.path.join(cache_dir, f"{self.uid}_X.npy"), inputs)
+    #             np.save(os.path.join(cache_dir, f"{self.uid}_Y.npy"), targets)
+    #             np.save(os.path.join(cache_dir, f"{self.uid}_t.npy"), outstamps)
+    #             np.save(os.path.join(cache_dir, f"{self.uid}_leads.npy"), out_leads)
 
-            # save if the data is not empty
-            if inputs is not None:
-                # save the data to the cache
-                np.save(os.path.join(cache_dir, f"{self.uid}_X.npy"), inputs)
-                np.save(os.path.join(cache_dir, f"{self.uid}_Y.npy"), targets)
-                np.save(os.path.join(cache_dir, f"{self.uid}_t.npy"), outstamps)
-                np.save(os.path.join(cache_dir, f"{self.uid}_leads.npy"), out_leads)
+    #             # load saved files into dask arrays
+    #             X = da.from_array(
+    #                 np.load(
+    #                     os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"
+    #                 ),
+    #                 chunks=(32, 5, 241, 241),
+    #             )
+    #             Y = da.from_array(
+    #                 np.load(os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r")
+    #             )
+    #             t = da.from_array(
+    #                 np.load(os.path.join(cache_dir, f"{self.uid}_t.npy"), mmap_mode="r")
+    #             )
+    #             leads = da.from_array(
+    #                 np.load(
+    #                     os.path.join(cache_dir, f"{self.uid}_leads.npy"), mmap_mode="r"
+    #                 )
+    #             )
+    #             return X, Y, t, leads
+    #         else:
+    #             # save empty arrays to the cache
+    #             np.save(os.path.join(cache_dir, f"{self.uid}_X.npy"), np.array([]))
+    #             np.save(os.path.join(cache_dir, f"{self.uid}_Y.npy"), np.array([]))
+    #             np.save(os.path.join(cache_dir, f"{self.uid}_t.npy"), np.array([]))
+    #             np.save(os.path.join(cache_dir, f"{self.uid}_leads.npy"), np.array([]))
+    #             return np.array([]), np.array([]), np.array([]), np.array([])
 
-                # load saved files into dask arrays
-                X = da.from_array(
-                    np.load(
-                        os.path.join(cache_dir, f"{self.uid}_X.npy"), mmap_mode="r"
-                    ),
-                    chunks=(32, 5, 241, 241),
-                )
-                Y = da.from_array(
-                    np.load(os.path.join(cache_dir, f"{self.uid}_Y.npy"), mmap_mode="r")
-                )
-                t = da.from_array(
-                    np.load(os.path.join(cache_dir, f"{self.uid}_t.npy"), mmap_mode="r")
-                )
-                leads = da.from_array(
-                    np.load(
-                        os.path.join(cache_dir, f"{self.uid}_leads.npy"), mmap_mode="r"
-                    )
-                )
-                return X, Y, t, leads
-            else:
-                # save empty arrays to the cache
-                np.save(os.path.join(cache_dir, f"{self.uid}_X.npy"), np.array([]))
-                np.save(os.path.join(cache_dir, f"{self.uid}_Y.npy"), np.array([]))
-                np.save(os.path.join(cache_dir, f"{self.uid}_t.npy"), np.array([]))
-                np.save(os.path.join(cache_dir, f"{self.uid}_leads.npy"), np.array([]))
-                return np.array([]), np.array([]), np.array([]), np.array([])
-
-        except Exception as e:
-            if kwargs.get("verbose", False):
-                print(f"Error serving AI data for {self.uid} with model {ai_model}")
-                print(e)
-            return None
+    #     except Exception as e:
+    #         if kwargs.get("verbose", False):
+    #             print(f"Error serving AI data for {self.uid} with model {ai_model}")
+    #             print(e)
+    #         return None
 
     def get_ground_truth(self, **kwargs):
         ground_truth = kwargs.get("ground_truth", ["wind", "pressure"])
@@ -2498,6 +2365,102 @@ class tc_track:
         if save_path:
             plt.savefig(save_path, dpi=150)
         plt.show()
+
+    # def animate_AI_ds(self, var, **kwargs):
+    #     figsize = kwargs.get("figsize", (5, 6))
+    #     dpi = kwargs.get("dpi", 150)
+    #     save_path = kwargs.get(
+    #         "save_path",
+    #         f"/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/{self.uid}_{var}_animation.gif",
+    #     )
+
+    #     # Check if the dataset doesn't exist in the object
+    #     if not hasattr(self, f"AI_ds"):
+    #         if kwargs.get("verbose", False):
+    #             print("Data not yet loaded - trying to load it now...")
+    #         self.load_data(**kwargs)
+
+    #     # Assert that the variable exists in the object data
+    #     assert (
+    #         var in self.__getattribute__("AI_ds").data_vars
+    #     ), f"Variable {var} not found in dataset"
+
+    #     # get sanitized timestamps
+    #     valid_steps = sanitize_timestamps(
+    #         self.timestamps, self.__getattribute__("AI_ds")
+    #     )
+
+    #     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    #     minn, maxx = (
+    #         self.__getattribute__("AI_ds")[var].min().values,
+    #         self.__getattribute__("AI_ds")[var].max().values,
+    #     )
+
+    #     data = self.__getattribute__("AI_ds")[var]
+
+    #     _, _, time_coord, _, leadtime_coord = get_coord_vars(data)
+
+    #     plot_kwargs = kwargs.get("plot_kwargs", {})
+    #     plot_kwargs["add_colorbar"] = False
+
+    #     plot_data = data.isel({time_coord: 0, leadtime_coord: 0})
+    #     plot_data = plot_data.where(plot_data.notnull(), drop=True)
+    #     plot_object = plot_data.plot(ax=ax, **plot_kwargs)
+
+    #     cbar = fig.colorbar(plot_object, orientation="horizontal", ax=ax, pad=0.1)
+    #     textcolor = kwargs.get("textcolor", np.array([242, 240, 228]) / 255)
+    #     cbar.ax.xaxis.set_tick_params(color=textcolor)
+
+    #     cbar.set_label(
+    #         f"{self.AI_ds[var].attrs['longname']}, {self.AI_ds[var].attrs['units']}",
+    #         color=textcolor,
+    #     )
+    #     plt.setp(plt.getp(cbar.ax.axes, "xticklabels"), color=textcolor, fontsize=6)
+
+    #     # # Set the colorbar label color
+    #     # cbar.ax.yaxis.label.set_color(
+    #     #     textcolor
+    #     # )  # Adjust 'color_here' to your desired color
+    #     # # Set the colorbar tick color
+    #     # cbar.ax.yaxis.set_tick_params(
+    #     #     color=textcolor
+    #     # )  # Replace 'tick_color_here' with your desired color
+
+    #     plot_facecolors(fig=fig, axes=ax, **kwargs)
+
+    #     # Get the 0th time in YYYY-MM-DD from self.AI_ds
+    #     time = self.AI_ds[time_coord].values[0].astype("datetime64[D]").astype(str)
+    #     plt.tight_layout()
+
+    #     # set ax title
+    #     ax.set_title(
+    #         f"{var} forecast ({time}) for leadtime +{data.isel({leadtime_coord: 0})[leadtime_coord].values.item()}h"
+    #     )
+
+    #     def update(frame):
+    #         ax.clear()
+    #         time = (
+    #             self.AI_ds[time_coord].values[frame].astype("datetime64[D]").astype(str)
+    #         )
+    #         plot_data = data.isel({time_coord: frame // 10, leadtime_coord: frame % 10})
+    #         plot_data = plot_data.where(plot_data.notnull(), drop=True)
+    #         plot_data.plot(ax=ax, **plot_kwargs)
+    #         plot_facecolors(fig=fig, axes=ax)
+    #         ax.set_title(
+    #             f"{var} forecast ({time}) for leadtime +{data.isel({leadtime_coord: frame%10})[leadtime_coord].values.item()}h"
+    #         )
+    #         plt.tight_layout()
+
+    #     ani = FuncAnimation(
+    #         fig,
+    #         update,
+    #         np.arange(1, valid_steps.size, 1),
+    #         blit=False,
+    #         interval=400,
+    #     )
+
+    #     ani.save(save_path)
 
     def animate_data(self, var, **kwargs):
         figsize = kwargs.get("figsize", (4, 6))
@@ -2702,12 +2665,590 @@ class tc_track:
         plt.show()
 
 
-# %%
-# if __name__ == "__main__":
-#     sets, data = get_sets(
-#         {"train": 0.6, "test": 0.2},
-#         datadir="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
-#     )
-#     input_means = data["train"]["inputs"].mean(axis=(0, -1, -2)).compute()
+# Class representing the timeseries object within the TCBench framework
+# This class becomes a subobject of the TC_track object
+class timeseries:
+    __valid_kwargs = [
+        "timeseries_source",
+    ]
+
+    __default_vals = {
+        "timeseries_source": "SHIPS_netcdfs",
+    }
+
+    def __str__(self):
+        return f"Timeseries object for {self.__parent.uid}"
+
+    def __init__(self, parent, **kwargs):
+        self.__parent = parent
+        source = kwargs.get("timeseries_source", "SHIPS_netcdfs")
+        self.filepath = os.path.join(self.__parent.datadir_path, source)
+
+    def load(self, **kwargs):
+        # check if the UID or the ALT_ID is in the ATCF format
+        if (
+            self.__parent.uid[0:2].isalpha()
+            and self.__parent.uid[0:2].isupper()
+            and self.__parent.uid[2:6].isdigit()
+        ):
+            # if it is, save the ID into a variable
+            atcf_id = self.__parent.uid
+        elif (
+            self.__parent.ALT_ID[0:2].isalpha()
+            and self.__parent.ALT_ID[0:2].isupper()
+            and self.__parent.ALT_ID[2:6].isdigit()
+        ):
+            # if it is, save the ID into a variable
+            atcf_id = self.__parent.ALT_ID
+        else:
+            raise ValueError(
+                f"Invalid ATCF ID format for storm {self.__parent.uid} with ALT_ID {self.__parent.ALT_ID}"
+            )
+
+        # extract the data folder from the kwargs
+        data_dir = kwargs.get(
+            "timeseries_dir",
+            os.path.join(self.__parent.datadir_path, "SHIPS_netcdfs"),
+        )
+
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, "ds") or kwargs.get("reload", False):
+            # Check if the dataset exists on disk
+            ds_path = os.path.join(data_dir, f"{atcf_id}.nc")
+
+            if os.path.exists(ds_path):
+                # If it does, load the dataset
+                # print("Loading dataset...")
+                setattr(
+                    self,
+                    "ds",
+                    xr.open_dataset(ds_path),
+                )
+            else:
+                # Raise file not found error
+                print(
+                    f"Time series storm data for storm {self.__parent.uid} with ATCF_ID {atcf_id} not found in timeseries directory {data_dir}"
+                )
+                raise FileNotFoundError(f"{ds_path} not found")
+
+    def serve(self, **kwargs):
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, "ds"):
+            # if it doesnt, try loading it
+            self.load(**kwargs)
+        pass
+
+        leadtime_min = kwargs.get("leadtime_min", 0)
+        leadtime_max = kwargs.get("leadtime_max", 0)
+
+        coord_array = np.array(self.ds.coords)
+        try:
+            time_coord = False
+            for idx, coord in enumerate(coord_array):
+                if not time_coord:
+                    time_coord = (
+                        coord_array[idx]
+                        if np.any(
+                            [
+                                valid_name == coord
+                                for valid_name in constants.valid_coords["time"]
+                            ]
+                        )
+                        else False
+                    )
+            if not time_coord:
+                raise ValueError("Time coordinate not found in dataset")
+        except:
+            raise ValueError("Error finding Time coordinate in dataset")
+
+        try:
+            ldt_coord = False
+            for idx, coord in enumerate(coord_array):
+                if not ldt_coord:
+                    ldt_coord = (
+                        coord_array[idx]
+                        if np.any(
+                            [
+                                valid_name in coord
+                                for valid_name in constants.valid_coords["leadtime"]
+                            ]
+                        )
+                        else False
+                    )
+            if not ldt_coord:
+                raise ValueError("Leadtime coordinate not found in dataset")
+        except:
+            raise ValueError("Error finding Leadtime coordinate in dataset")
+
+        other_coords = coord_array[~np.isin(coord_array, time_coord)]
+
+        ds = self.ds.copy()
+        if other_coords is not None:
+            for coord in other_coords:
+                if coord == ldt_coord:
+                    ds = ds.sel({ldt_coord: slice(leadtime_min, leadtime_max)})
+                ds = ds.where(~ds[coord].isnull(), drop=True)
+                if kwargs.get("verbose", False):
+                    print(f"Data shape: {ds}")
+
+        variables = kwargs.get(
+            "variables",
+            constants.default_ships_vars,
+        )
+
+        if "LHRD" in variables:
+            ds["LHRD"] = ds["SHDC"] * np.sin(np.radians(ds["lat"].astype(float)))
+
+        if "VSHR" in variables:
+            ds["VSHR"] = ds["VMAX"] * ds["SHDC"]
+
+        try:
+            ds = ds[variables]
+        except:
+            print(f"One or more variables missing from storm {self.uid}. Skipping...")
+            return None, None
+
+        data = None
+        for var in variables:
+            # Select only columns that have at least one non_nan
+            temp_data = (
+                ds[var].where(np.any(~ds[var].isnull(), axis=0), drop=True).values
+            )
+            if len(temp_data) == 0:
+                continue
+            if temp_data.ndim == 1:
+                temp_data = temp_data[np.newaxis, ...]
+
+            if data is None:
+                data = temp_data
+            else:
+                data = np.hstack([data, temp_data])
+        data = data.astype(float)
+
+        # Boolean mask to remove nans
+        bool_mask = np.any(np.isnan(data), axis=1)
+        data = data[~bool_mask]
+
+        timestamps = ds[time_coord].values[~bool_mask]
+
+        if kwargs.get("verbose", False):
+            print(
+                f"A total of {len(variables)} variables were loaded for storm ",
+                f"{self.uid} with shape {data.shape}. {bool_mask.sum()} nan rows",
+                f" were removed.",
+                sep="",
+                flush=True,
+            )
+
+        return data, timestamps
+
+
+# Class organizing the AI data side of the track
+class AI:
+    __valid_kwargs = ["filepath", "ai_model", "cache_dir"]
+
+    __default_vals = {"filepath": None, "ai_model": "panguweather", "cache_dir": None}
+
+    def __str__(self):
+        return f"AI data object for {self.__parent.uid}"
+
+    def __init__(self, parent, **kwargs):
+        self.__parent = parent
+        self.model = kwargs.get("ai_model", "panguweather")
+
+        if kwargs.get("filepath", None) is None:
+            self.filepath = os.path.join(
+                self.__parent.datadir_path,
+                str(self.__parent.season),
+                f"{self.__parent.uid}.AI.{self.model}.nc",
+            )
+        else:
+            self.filepath = kwargs.get("filepath")
+
+        if kwargs.get("cache_dir", None) is None:
+            self.cache_dir = os.path.join(self.__parent.datadir_path, "cache")
+        else:
+            self.cache_dir = kwargs.get("cache_dir")
+
+    def load(self, **kwargs):
+        """
+        Function to load the AI data from storage
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+
+        """
+
+        if kwargs.get("verbose", False):
+            print(f"Loading {self.model} forecast data for {self.__parent.uid}...")
+
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, "ds"):
+            if os.path.exists(self.filepath):
+                # If it does, load the dataset
+                # print("Loading dataset...")
+                setattr(self, "ds", xr.open_dataset(self.filepath))
+            else:
+                if kwargs.get("verbose", False) or kwargs.get("debug", False):
+                    print(
+                        f"Dataset {self.__parent.uid}.AI.{self.model}.nc not found on disk"
+                    )
+                    print(
+                        'You can create the dataset by running the "process_data_collection" method'
+                        " with an AI data collection object as an argument."
+                    )
+
+    def serve(self, **kwargs):
+        try:
+            # check if the cache dir exists
+            cache_dtype = kwargs.get("cache_dtype", float)
+            # cache_dir = kwargs.get(
+            #     "cache_dir", os.path.join(self.datadir_path, "cache")
+            # )
+            load_from_cache = kwargs.get("use_cached", True)
+            # ai_model = kwargs.get("ai_model", "panguweather")
+
+            if os.path.exists(self.cache_dir) and load_from_cache:
+                try:
+                    # check if the cache files exist. If they don't exist, continue
+                    if not all(
+                        [
+                            os.path.exists(
+                                os.path.join(
+                                    self.cache_dir, f"{self.__parent.uid}_{file}.npy"
+                                )
+                            )
+                            for file in ["X", "Y", "t", "leads"]
+                        ]
+                    ):
+                        raise FileNotFoundError(
+                            "Cache files not found. Rebuilding cache..."
+                        )
+
+                    # load the files into dask arrays
+                    X = da.from_array(
+                        np.load(
+                            os.path.join(self.cache_dir, f"{self.__parent.uid}_X.npy"),
+                            mmap_mode="r",
+                        ),
+                        chunks=(32, 5, 241, 241),
+                    )
+                    Y = da.from_array(
+                        np.load(
+                            os.path.join(self.cache_dir, f"{self.__parent.uid}_Y.npy"),
+                            mmap_mode="r",
+                        )
+                    )
+                    t = da.from_array(
+                        np.load(
+                            os.path.join(self.cache_dir, f"{self.__parent.uid}_t.npy"),
+                            mmap_mode="r",
+                        )
+                    )
+                    leads = da.from_array(
+                        np.load(
+                            os.path.join(
+                                self.cache_dir, f"{self.__parent.uid}_leads.npy"
+                            ),
+                            mmap_mode="r",
+                        )
+                    )
+                    if kwargs.get("verbose", False):
+                        print(
+                            f"Succesfully loaded cache files for {self.__parent.uid} from cache...",
+                            flush=True,
+                        )
+
+                    return X, Y, t, leads
+                except Exception as e:
+                    if kwargs.get("debug", False):
+                        print(
+                            f"Error loading cache files for {self.__parent.uid}. Rebuilding cache..."
+                        )
+                        if kwargs.get("verbose", False):
+                            print(e)
+            else:
+                if not os.path.exists(self.cache_dir):
+                    os.makedirs(self.cache_dir)
+
+            if kwargs.get("verbose", False) and kwargs.get("use_cached", True):
+                print(
+                    f"used_chached disabled or cache files not found for {self.__parent.uid}. Rebuilding cache..."
+                )
+
+            # Check if the dataset doesn't exist in the object
+
+            if not hasattr(self, "ds"):
+                # if it doesnt, try loading it
+                self.load(**kwargs)
+
+            assert hasattr(
+                self, "ds"
+            ), f"AI dataset not found for {self.__parent.uid} with model {self.model}"
+
+            (
+                _,
+                _,
+                time_coord,
+                _,
+                leadtime_coord,
+            ) = get_coord_vars(self.ds)
+
+            # Get ground truth and valid timestamps
+            gt, stamps = self.__parent.get_ground_truth(**kwargs)
+
+            valid_stamps = sanitize_timestamps(stamps, self.ds, time_coord)
+
+            gt = gt[np.isin(stamps, valid_stamps)]
+            stamps = stamps[np.isin(stamps, valid_stamps)]
+
+            if len(gt) == 0:
+                if kwargs.get("verbose", False) or kwargs.get("debug", False):
+                    print(
+                        f"No valid timestamps found for {self.__parent.uid} with model {self.model}"
+                    )
+                return
+
+            # Get the AI data
+            inputs = None
+            targets = None
+            outstamps = None
+            out_leads = None
+            for stamp in stamps:
+                temp_ds = self.ds.sel({time_coord: stamp})
+                temp_ds = temp_ds.where(~temp_ds.isnull(), drop=True)
+
+                timedeltas = temp_ds[leadtime_coord].values.astype("timedelta64[h]")
+                leadtimes = stamp + timedeltas
+
+                # make a boolean index to see what leadtime data we have a
+                # truth value for
+                bool_idx = np.isin(leadtimes, stamps)
+
+                out_data = temp_ds.isel({leadtime_coord: bool_idx}).to_array().values
+                out_data = np.moveaxis(out_data, 0, 1)
+                out_targets = gt[np.isin(stamps, leadtimes[bool_idx])]
+                # base_targets = gt[stamps == stamp]
+                temp_stamps = leadtimes[bool_idx]
+                temp_leads = temp_ds.isel({leadtime_coord: bool_idx})[
+                    leadtime_coord
+                ].values
+
+                if outstamps is None:
+                    try:
+                        ##TODO: The following check appears to be and issue
+                        ## with the way the data is being filtered when processing
+                        ## the storm fields. My guess is that this is due to the
+                        ## crossing of the 0° longitude line. This should be fixed
+                        ## process_data_collection method.
+
+                        if out_data.shape[-2:] != (
+                            241,
+                            241,
+                        ):
+                            raise ValueError(
+                                f"Invalid shape for stamp {stamp}... Skipping..."
+                            )
+                        else:
+                            inputs = out_data
+                            targets = out_targets
+                            outstamps = temp_stamps  # leadtimes[bool_idx]
+                            # base_stamps = np.full_like(outstamps, stamp)
+                            out_leads = temp_leads
+
+                    except ValueError as e:
+                        if kwargs.get("verbose", False):
+                            print(f"Problem processing {stamp}... Skipping...")
+                            print(e)
+                else:
+                    try:
+                        if out_data.shape[-2:] != (241, 241):
+                            raise ValueError(
+                                f"Invalid shape for stamp {stamp}... Skipping..."
+                            )
+                        else:
+                            inputs = np.vstack([inputs, out_data])
+                            targets = np.vstack([targets, out_targets])
+                            outstamps = np.hstack([outstamps, temp_stamps])
+                            out_leads = np.hstack([out_leads, temp_leads])
+
+                        # outstamps = np.hstack([outstamps, leadtimes[bool_idx]])
+                        # out_leads = np.hstack(
+                        #     [out_leads, temp_ds[leadtime_coord].values[bool_idx]]
+                        # )
+
+                    except ValueError as e:
+                        if kwargs.get("verbose", False):
+                            print(f"Problem processing {stamp}... Skipping...")
+                            print(e)
+
+            # save if the data is not empty
+            if inputs is not None:
+                # save the data to the cache
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_X.npy"), inputs
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_Y.npy"), targets
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_t.npy"),
+                    outstamps,
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_leads.npy"),
+                    out_leads,
+                )
+
+                # load saved files into dask arrays
+                X = da.from_array(
+                    np.load(
+                        os.path.join(self.cache_dir, f"{self.__parent.uid}_X.npy"),
+                        mmap_mode="r",
+                    ),
+                    chunks=(32, 5, 241, 241),
+                )
+                Y = da.from_array(
+                    np.load(
+                        os.path.join(self.cache_dir, f"{self.__parent.uid}_Y.npy"),
+                        mmap_mode="r",
+                    )
+                )
+                t = da.from_array(
+                    np.load(
+                        os.path.join(self.cache_dir, f"{self.__parent.uid}_t.npy"),
+                        mmap_mode="r",
+                    )
+                )
+                leads = da.from_array(
+                    np.load(
+                        os.path.join(self.cache_dir, f"{self.__parent.uid}_leads.npy"),
+                        mmap_mode="r",
+                    )
+                )
+                return X, Y, t, leads
+            else:
+                # save empty arrays to the cache
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_X.npy"),
+                    np.array([]),
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_Y.npy"),
+                    np.array([]),
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_t.npy"),
+                    np.array([]),
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_leads.npy"),
+                    np.array([]),
+                )
+                return np.array([]), np.array([]), np.array([]), np.array([])
+
+        except Exception as e:
+            if kwargs.get("verbose", False):
+                print(
+                    f"Error serving AI data for {self.__parent.uid} with model {self.model}"
+                )
+                print(e)
+            return None
+
+    def animate_var(self, var, **kwargs):
+        figsize = kwargs.get("figsize", (5, 6))
+        dpi = kwargs.get("dpi", 150)
+        save_path = kwargs.get(
+            "save_path",
+            f"/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/{self.__parent.uid}_{var}_animation.gif",
+        )
+
+        # Check if the dataset doesn't exist in the object
+        if not hasattr(self, "ds"):
+            if kwargs.get("verbose", False):
+                print("Data not yet loaded - trying to load it now...")
+            self.load(**kwargs)
+
+        # Assert that the variable exists in the object data
+        assert var in self.ds.data_vars, f"Variable {var} not found in dataset"
+
+        # get sanitized timestamps
+        valid_steps = sanitize_timestamps(self.__parent.timestamps, self.ds)
+
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+        minn, maxx = (
+            self.ds[var].min().values,
+            self.ds[var].max().values,
+        )
+
+        data = self.ds[var]
+
+        _, _, time_coord, _, leadtime_coord = get_coord_vars(data)
+
+        plot_kwargs = kwargs.get("plot_kwargs", {})
+        plot_kwargs["add_colorbar"] = False
+
+        plot_data = data.isel({time_coord: 0, leadtime_coord: 0})
+        plot_data = plot_data.where(plot_data.notnull(), drop=True)
+        plot_object = plot_data.plot(ax=ax, **plot_kwargs)
+
+        cbar = fig.colorbar(plot_object, orientation="horizontal", ax=ax, pad=0.1)
+        textcolor = kwargs.get("textcolor", np.array([242, 240, 228]) / 255)
+        cbar.ax.xaxis.set_tick_params(color=textcolor)
+
+        cbar.set_label(
+            f"{self.ds[var].attrs['longname']}, {self.ds[var].attrs['units']}",
+            color=textcolor,
+        )
+        plt.setp(plt.getp(cbar.ax.axes, "xticklabels"), color=textcolor, fontsize=6)
+
+        # # Set the colorbar label color
+        # cbar.ax.yaxis.label.set_color(
+        #     textcolor
+        # )  # Adjust 'color_here' to your desired color
+        # # Set the colorbar tick color
+        # cbar.ax.yaxis.set_tick_params(
+        #     color=textcolor
+        # )  # Replace 'tick_color_here' with your desired color
+
+        plot_facecolors(fig=fig, axes=ax, **kwargs)
+
+        # Get the 0th time in YYYY-MM-DD from self.ds
+        time = self.ds[time_coord].values[0].astype("datetime64[D]").astype(str)
+        plt.tight_layout()
+
+        # set ax title
+        ax.set_title(
+            f"{var} forecast ({time}) for leadtime +{data.isel({leadtime_coord: 0})[leadtime_coord].values.item()}h"
+        )
+
+        def update(frame):
+            ax.clear()
+            time = self.ds[time_coord].values[frame].astype("datetime64[D]").astype(str)
+            plot_data = data.isel({time_coord: frame // 10, leadtime_coord: frame % 10})
+            plot_data = plot_data.where(plot_data.notnull(), drop=True)
+            plot_data.plot(ax=ax, **plot_kwargs)
+            plot_facecolors(fig=fig, axes=ax)
+            ax.set_title(
+                f"{var} forecast ({time}) for leadtime +{data.isel({leadtime_coord: frame%10})[leadtime_coord].values.item()}h"
+            )
+            plt.tight_layout()
+
+        ani = FuncAnimation(
+            fig,
+            update,
+            np.arange(1, valid_steps.size, 1),
+            blit=False,
+            interval=400,
+        )
+
+        ani.save(save_path)
+
 
 # %%

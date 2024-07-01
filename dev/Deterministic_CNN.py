@@ -60,7 +60,7 @@ if __name__ == "__main__":
 
     print("Loading datasets...", flush=True)
 
-    sets, data = toolbox.get_sets(
+    sets, data = toolbox.get_ai_sets(
         {
             "train": years[:-2],
             "validation": years[-2:],
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         # debug=True,
     )
 
-    # sets, data = toolbox.get_sets(
+    # sets, data = toolbox.get_ai_sets(
     #     {"train": [2014],"validation": [2015], }, # "test": [2020]},
     #     datadir=datadir,
     #     test_strategy="custom",
@@ -150,7 +150,7 @@ if __name__ == "__main__":
         device=calc_device,
         cachedir="/scratch/mgomezd1/cache",  # os.path.join(datadir, 'cache'),
         zarr_name="train",
-        overwrite=False,
+        overwrite=True,
         num_workers=num_cores,
         # load_into_memory=True,
     )
@@ -165,7 +165,7 @@ if __name__ == "__main__":
         device=calc_device,
         cachedir="/scratch/mgomezd1/cache",  # os.path.join(datadir, 'cache'),
         zarr_name="validation",
-        overwrite=False,
+        overwrite=True,
         num_workers=num_cores,
         # load_into_memory=True,
     )
@@ -185,15 +185,18 @@ if __name__ == "__main__":
     #  Model
     # We begin by instantiating our baseline model
     # CNN = baselines.TC_DeltaIntensity_CNN(deterministic=True).to(calc_device)
-    # CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
-    CNN = baselines.Regularized_NonDil_CNN(
-        deterministic=True, dropout=0.1, dropout2d=0.1
+    CNN = baselines.Regularized_Dilated_CNN(
+        deterministic=True, dropout=0.05, dropout2d=0.05
     ).to(calc_device)
+    # CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
+    # CNN = baselines.Regularized_NonDil_CNN(
+    #     deterministic=True, dropout=0.1, dropout2d=0.1
+    # ).to(calc_device)
 
-    optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(CNN.parameters(), lr=6e-4, weight_decay=1e-4)
     num_epochs = 100
     patience = 4  # stop if validation loss increases for patience epochs
-    bias_threshold = 15  # stop if validation loss / train loss > bias_threshold
+    bias_threshold = 10  # stop if validation loss / train loss > bias_threshold
 
     #  Training
 
@@ -224,7 +227,8 @@ if __name__ == "__main__":
             print(
                 "\r"
                 + f"{i}/{len(train_loader)}"
-                + "." * int(20 * i / len(train_loader)),
+                + "." * int(20 * i / len(train_loader))
+                + f" Batch loss: {batch_loss.item()}",
                 end="",
                 flush=True,
             )
@@ -289,6 +293,7 @@ if __name__ == "__main__":
         ) as f:
             pickle.dump(losses, f)
 
+    # %%
     # Predict the validation data with the CNN model
     with torch.no_grad():
         y_hat = None
@@ -332,7 +337,7 @@ if __name__ == "__main__":
         1, 2, figsize=(15, 5), dpi=150, gridspec_kw={"width_ratios": [2, 1]}
     )
     metrics.plot_performance(
-        global_performance, axes, model_name="MLR", baseline_name="Persistence"
+        global_performance, axes, model_name=f"{str(CNN)}", baseline_name="Persistence"
     )
     toolbox.plot_facecolors(fig=fig, axes=axes)
     # Save the figure in the results directory
@@ -370,7 +375,10 @@ if __name__ == "__main__":
         )
 
         metrics.plot_performance(
-            lead_performance, axes[idx], model_name="MLR", baseline_name="Persistence"
+            lead_performance,
+            axes[idx],
+            model_name=f"{str(CNN)}",
+            baseline_name="Persistence",
         )
         toolbox.plot_facecolors(fig=fig, axes=axes[idx])
 
@@ -385,6 +393,7 @@ if __name__ == "__main__":
         )
     )
 
+    # %%
     # Let's also make the same plots for the training data
     with torch.no_grad():
         y_hat = None
@@ -410,7 +419,7 @@ if __name__ == "__main__":
         1, 2, figsize=(15, 5), dpi=150, gridspec_kw={"width_ratios": [2, 1]}
     )
     metrics.plot_performance(
-        global_performance, axes, model_name="MLR", baseline_name="Persistence"
+        global_performance, axes, model_name=f"{str(CNN)}", baseline_name="Persistence"
     )
     toolbox.plot_facecolors(fig=fig, axes=axes)
     # Save the figure in the results directory
@@ -448,7 +457,10 @@ if __name__ == "__main__":
         )
 
         metrics.plot_performance(
-            lead_performance, axes[idx], model_name="MLR", baseline_name="Persistence"
+            lead_performance,
+            axes[idx],
+            model_name=f"{str(CNN)}",
+            baseline_name="Persistence",
         )
         toolbox.plot_facecolors(fig=fig, axes=axes[idx])
 

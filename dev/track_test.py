@@ -25,8 +25,8 @@ full_data = toolbox.read_hist_track_file(
     tracks_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/"
 )
 # %%
-data_2005 = full_data[full_data.ISO_TIME.dt.year == 2020]
-storm = data_2005[data_2005.NAME == "LAURA"]
+data = full_data[full_data.ISO_TIME.dt.year == 2019]
+storm = data[data.NAME == "DORIAN"]
 
 # %%
 track = toolbox.tc_track(
@@ -40,9 +40,27 @@ track = toolbox.tc_track(
     datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
     storm_season=storm.SEASON.iloc[0],
 )
+
+# track.filepath = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha/2019/"
+
+# track.load_ai_data()
 # %%
-data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
-save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
+# calculate the wind from the components in AI_ds and store it in the dataset
+# wind = (track.AI_ds.u10**2 + track.AI_ds.v10**2) ** 0.5
+# wind.attrs["units"] = "m/s"
+# wind.attrs["longname"] = "Wind Speed"
+# track.AI_ds["wind_speed"] = wind
+# msl_attrs = track.AI_ds.msl.attrs
+# track.AI_ds["msl"] = track.AI_ds.msl / 100
+# msl_attrs["units"] = "hPa"
+# track.AI_ds.msl.attrs = msl_attrs
+
+
+# track.animate_AI_ds(var="msl", plot_kwargs={"cmap": "twilight"})
+# track.animate_AI_ds(var="wind_speed", plot_kwargs={"cmap": "seismic"})
+# %%
+# data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+# save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
 
 # dc = dlib.Data_Collection(data_dir)
 
@@ -221,11 +239,11 @@ save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data
 
 # # %%
 
-# %%
-out_test = track.serve_ai_data()
-inputs = out_test[0]
-# %%
-for i in range(5):
-    plt.imshow(inputs[100, i])
-    plt.show()
-# %%
+# # %%
+# out_test = track.serve_ai_data()
+# inputs = out_test[0]
+# # %%
+# for i in range(5):
+#     plt.imshow(inputs[100, i])
+#     plt.show()
+# # %%

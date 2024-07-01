@@ -24,7 +24,7 @@ rng = np.random.default_rng(seed=42)
 years = list(range(2013, 2020))
 rng.shuffle(years)
 
-sets, data = toolbox.get_sets(
+sets, data = toolbox.get_ai_sets(
     {"train": years[:-2], "test": [2020], "validation": years[-2:]},
     datadir=datadir,
     test_strategy="custom",

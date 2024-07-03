@@ -20,6 +20,7 @@ import matplotlib as mpl
 import numpy as np
 import dask.array as da
 import pandas as pd
+from scipy.special import erf
 
 try:
     import torch
@@ -73,33 +74,33 @@ def _check_classification(y_true, y_pred):
 # %% Metrics
 
 
-def CRPS(y_true, y_pred):
-    """Compute the Continuous Ranked Probability Score (CRPS).
+# def CRPS(y_true, y_pred):
+#     """Compute the Continuous Ranked Probability Score (CRPS).
 
-    The CRPS is a probabilistic metric that evaluates the accuracy of a
-    probabilistic forecast. It is defined as the integral of the squared
-    difference between the cumulative distribution function (CDF) of the
-    forecast and the CDF of the observations.
+#     The CRPS is a probabilistic metric that evaluates the accuracy of a
+#     probabilistic forecast. It is defined as the integral of the squared
+#     difference between the cumulative distribution function (CDF) of the
+#     forecast and the CDF of the observations.
 
-    Parameters
-    ----------
-    y_true : array-like of shape (n_samples,)
-        The true target values.
+#     Parameters
+#     ----------
+#     y_true : array-like of shape (n_samples,)
+#         The true target values.
 
-    y_pred : array-like of shape (n_samples, n_classes)
-        The predicted probabilities for each class.
+#     y_pred : array-like of shape (n_samples, n_classes)
+#         The predicted probabilities for each class.
 
-    Returns
-    -------
-    crps : float
-        The CRPS value.
-    """
-    # Check that the inputs are of the correct form
-    y_true, y_pred = _check_classification(y_true, y_pred)
+#     Returns
+#     -------
+#     crps : float
+#         The CRPS value.
+#     """
+#     # Check that the inputs are of the correct form
+#     y_true, y_pred = _check_classification(y_true, y_pred)
 
-    # Compute the CRPS
-    raise NotImplementedError
-    return crps
+#     # Compute the CRPS
+#     raise NotImplementedError
+#     return crps
 
 
 def CRPS_ML(y_pred, y_true, **kwargs):
@@ -113,10 +114,12 @@ def CRPS_ML(y_pred, y_true, **kwargs):
     Parameters
     ----------
 
-    y_pred : array-like of shape (n_samples, mu, sigma)
-        The predicted probability parameters for each sample.
+    y_pred : array-like of shape (n_samples, 2*n_features)
+        The predicted probability parameters for each sample. The odd columns
+        should contain the mean (mu), and the even columns should contain the
+        standard deviation (sigma).
 
-    y_true : array-like of shape (n_samples,)
+    y_true : array-like of shape (n_samples,n_features)
 
     Returns
     -------
@@ -127,13 +130,11 @@ def CRPS_ML(y_pred, y_true, **kwargs):
     # taken from https://github.com/WillyChap/ARML_Probabilistic/blob/main/Coastal_Points/Testing_and_Utility_Notebooks/CRPS_Verify.ipynb
     # and work by Louis Poulain--Auzeau (https://github.com/louisPoulain)
     reduction = kwargs.get("reduction", "mean")
-
-    mu = y_pred[:, 0]
-    sigma = y_pred[:, 1]
+    mu = y_pred[:, ::2]
+    sigma = y_pred[:, 1::2]
 
     # prevent negative sigmas
     sigma = torch.sqrt(sigma.pow(2))
-
     loc = (y_true - mu) / sigma
     pdf = torch.exp(-0.5 * loc.pow(2)) / torch.sqrt(
         2 * torch.from_numpy(np.array(np.pi))
@@ -239,14 +240,6 @@ def summarize_performance(y_true, y_pred, y_baseline, metrics: list, **kwargs):
                     - performance[f"{metric_name}_{y_labels[i]}"]
                     / performance[f"{metric_name}_{y_labels[i]}_baseline"]
                 )
-        # performance[metric.__name__] = metric(y_true, y_pred)
-        # performance[f"{metric.__name__}_baseline"] = metric(y_true, y_baseline)
-
-        # if kwargs.get("skill", True):
-        #     performance[f"{metric.__name__}_skill"] = 1 - (
-        #         performance[metric.__name__]
-        #         / performance[f"{metric.__name__}_baseline"]
-        #     )
 
     return performance
 
@@ -337,29 +330,6 @@ def plot_performance(metrics: dict, ax, **kwargs):
         ax2.set_xticks(range(len(metric_names)))
         ax2.set_xticklabels([""] * len(metric_names))
         ax2.legend(loc="lower right", framealpha=0.5)
-
-    # if kwargs.get("skill", True):
-    #     for i, (metric, value) in enumerate(metrics.items()):
-    #         if "skill" in metric:
-    #             ax2.bar(
-    #                 [i],
-    #                 [value],
-    #                 color=colors[i % len(colors)],
-    #                 label=metric,
-    #                 hatch=kwargs.get("skill_hatch", "//"),
-    #             )
-
-    # if not kwargs.get("skill"):
-    #     axes = np.array([ax])
-    # else:
-    #     axes = ax
-
-    # for ax in axes.flatten():
-    #     ax.legend()
-    #     ax.set_xticks(range(len(metrics)))
-    #     ax.set_xticklabels(metrics.keys())
-    #     ax.set_ylabel("Score")
-    #     ax.set_title("Performance Metrics")
 
 
 # %%

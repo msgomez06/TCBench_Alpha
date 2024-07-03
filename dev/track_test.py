@@ -25,8 +25,8 @@ full_data = toolbox.read_hist_track_file(
     tracks_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/"
 )
 # %%
-data = full_data[full_data.ISO_TIME.dt.year == 2019]
-storm = data[data.NAME == "DORIAN"]
+data = full_data[full_data.ISO_TIME.dt.year == 2017]
+storm = data[data.NAME == "MARIA"]
 
 # %%
 track = toolbox.tc_track(
@@ -40,6 +40,20 @@ track = toolbox.tc_track(
     datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
     storm_season=storm.SEASON.iloc[0],
 )
+
+track.ai.animate_var("u10", plot_kwargs={"cmap": "seismic"})
+
+# %%
+
+track.ai.ds.z500.attrs["longname"] = "500 hPa Geopotential Height"
+track.ai.ds.t850.attrs["longname"] = "850 hPa Temperature"
+
+track.ai.animate_var("u10", plot_kwargs={"cmap": "seismic"})
+track.ai.animate_var("msl", plot_kwargs={"cmap": "twilight"})
+track.ai.animate_var("v10", plot_kwargs={"cmap": "seismic"})
+
+track.ai.animate_var("z500", plot_kwargs={"cmap": "twilight"})
+track.ai.animate_var("t850", plot_kwargs={"cmap": "seismic"})
 
 # track.filepath = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha/2019/"
 

@@ -1,3 +1,4 @@
+# %% This line makes it run on jupyter notebook by default in vscode
 #  Imports
 # OS and IO
 import os
@@ -40,9 +41,9 @@ if __name__ == "__main__":
         "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/"
     )
 
-    use_gpu = True
+    use_cuda = False
     # Check for GPU availability
-    if torch.cuda.device_count() > 0 and use_gpu:
+    if torch.cuda.device_count() > 0 and use_cuda:
         calc_device = torch.device("cuda:0")
     else:
         calc_device = torch.device("cpu")
@@ -140,7 +141,7 @@ if __name__ == "__main__":
 
     # Let's define some hyperparameters
     batch_size = 32
-    loss_func = torch.nn.MSELoss()
+    loss_func = metrics.CRPS_ML
     num_workers = (
         int(num_cores * 2 / 3)
         if (calc_device == torch.device("cpu") and num_cores > 1)
@@ -199,9 +200,9 @@ if __name__ == "__main__":
     # CNN = baselines.Regularized_Dilated_CNN(
     #     deterministic=True, dropout=0.05, dropout2d=0.05
     # ).to(calc_device)
-    # CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
+    # CNN = baselines.TC_DeltaIntensity_nonDilCNN(deterministic=False).to(calc_device)
     CNN = baselines.Regularized_NonDil_CNN(
-        deterministic=True, dropout=0.05, dropout2d=0.05
+        deterministic=True, dropout=0.1, dropout2d=0.1
     ).to(calc_device)
 
     optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-4)  # , weight_decay=1e-4)

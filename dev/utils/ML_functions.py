@@ -26,32 +26,26 @@ from dask import optimize
 ## TODO: add logging
 ## TODO: implement other scaling methods (e.g., min-max)
 
+
 ## TODO: Properly parallelize the standard scaler
 class AI_StandardScaler(preprocessing.StandardScaler):
     # The fit function should expect dask arrays
     def fit(self, X, y=None, **kwargs):
         assert isinstance(X, da.Array), "X should be a dask array"
         num_workers = kwargs.get("num_workers", 1)
-        mean = X.mean(axis=(0, -1, -2)).compute(num_workers=num_workers, scheduler="threads")
-        std = X.std(axis=(0, -1, -2)).compute(num_workers=num_workers, scheduler="threads")
-        self.mean_ = np.tile(
-            mean.reshape(-1, 1, 1), (1, 241, 241)
+        mean = X.mean(axis=(0, -1, -2)).compute(
+            num_workers=num_workers, scheduler="threads"
         )
-        self.scale_ = np.tile(
-            std.reshape(-1, 1, 1), (1, 241, 241)
+        std = X.std(axis=(0, -1, -2)).compute(
+            num_workers=num_workers, scheduler="threads"
         )
+        self.mean_ = np.tile(mean.reshape(-1, 1, 1), (1, 241, 241))
+        self.scale_ = np.tile(std.reshape(-1, 1, 1), (1, 241, 241))
         return self
 
 
 class DaskDataset(Dataset):
-    def __init__(
-            self, 
-            AI_X, 
-            AI_scaler, 
-            base_int, 
-            base_scaler,
-            target_data, 
-            **kwargs):
+    def __init__(self, AI_X, AI_scaler, base_int, base_scaler, target_data, **kwargs):
         # Assert that AI_X and base_int are dask arrays
         assert isinstance(AI_X, da.Array), "AI_X should be a dask array"
         # and that they have the same length
@@ -63,6 +57,7 @@ class DaskDataset(Dataset):
         self.AI_scaler = AI_scaler
         self.base_int = base_int
         self.base_scaler = base_scaler
+        self.target_scaler = kwargs.get("target_scaler", None)
         self.target_data = target_data
         self.set_name = kwargs.get("set_name", "unnamed")
 
@@ -77,15 +72,36 @@ class DaskDataset(Dataset):
         # self.base_int = self.base_int.rechunk((self.chunk_size, 2))
 
         # Scale the data using the scaler using dask.delayed.ravel
-
         interim = self.AI_X.rechunk((self.chunk_size, 5, 241, 241)).to_delayed().ravel()
-        interim = [da.from_delayed(self.AI_scaler.transform(block), shape=(min(self.chunk_size, self.AI_X.shape[0] - i*self.chunk_size), 5, 241, 241), dtype=self.AI_X.dtype) for i, block in enumerate(interim)]
+        interim = [
+            da.from_delayed(
+                self.AI_scaler.transform(block),
+                shape=(
+                    min(self.chunk_size, self.AI_X.shape[0] - i * self.chunk_size),
+                    5,
+                    241,
+                    241,
+                ),
+                dtype=self.AI_X.dtype,
+            )
+            for i, block in enumerate(interim)
+        ]
         self.AI_X = da.concatenate(interim)
 
         # self.AI_X = da.map_blocks(
         #     self.AI_scaler.transform, self.AI_X, dtype=np.float32, chunks=self.AI_X.chunksize)
-        # self.base_int = da.map_blocks(
-        #     self.base_scaler.transform, self.base_int, dtype=np.float32, chunks=self.base_int.chunksize)
+        self.base_int = da.map_blocks(
+            self.base_scaler.transform,
+            self.base_int,
+            dtype=np.float32,
+            chunks=self.base_int.chunksize,
+        ).compute()
+        self.target_data = da.map_blocks(
+            self.target_scaler.transform,
+            self.target_data,
+            dtype=np.float32,
+            chunks=self.target_data.chunksize,
+        ).compute()
 
         if kwargs.get("load_into_memory", False):
             self.AI_X = self.AI_X.compute()
@@ -94,7 +110,7 @@ class DaskDataset(Dataset):
         else:
 
             zarr_name = kwargs.get("zarr_name", "unnamed")
-            cachedir = kwargs.get("cachedir", os.path.join(os.getcwd(), 'cache'))
+            cachedir = kwargs.get("cachedir", os.path.join(os.getcwd(), "cache"))
             zarr_path = os.path.join(cachedir, f"{zarr_name}.zarr")
 
             if not os.path.exists(zarr_path):
@@ -108,11 +124,14 @@ class DaskDataset(Dataset):
             elif kwargs.get("overwrite", True):
                 # overwrite
                 self.AI_X.to_zarr(AI_X_path, overwrite=True)
-            
+
             # load AI_X from zarr
             self.AI_X = da.from_zarr(AI_X_path)
 
-        self.device = kwargs.get("device", torch.device('cuda') if torch.cuda.is_available else torch.device("cpu"))
+        self.device = kwargs.get(
+            "device",
+            torch.device("cuda") if torch.cuda.is_available else torch.device("cpu"),
+        )
 
     def __len__(self):
         return len(self.base_int)
@@ -125,7 +144,7 @@ class DaskDataset(Dataset):
         # target_sample = torch.tensor(self.target_data[idx], dtype=torch.float32)
 
         # return AI_sample, base_int_sample, target_sample
-        
+
         # with warnings.catch_warnings():
         #     warnings.simplefilter("ignore")  # Ignore all warnings
         AI_sample = self.AI_X[idx]
@@ -141,9 +160,7 @@ class DaskDataset(Dataset):
         output = []
         for array in sample:
             if isinstance(array, np.ndarray):
-                array = torch.from_numpy(array.astype(np.float32)).to(
-                    self.device
-                )
+                array = torch.from_numpy(array.astype(np.float32)).to(self.device)
                 output.append(array)
             elif isinstance(array, da.Array):
                 array = torch.from_numpy(array.compute().astype(np.float32)).to(

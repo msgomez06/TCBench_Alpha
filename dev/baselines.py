@@ -582,14 +582,14 @@ class TC_DeltaIntensity_nonDilCNN(nn.Module):
         x = pooling(x, kernel_size=self.pool_size, stride=self.pool_stride)
 
         # Apply the final convolutional layer
-        x = self.caf(self.conv5(x))
+        x = caf(self.conv5(x))
 
         # Flatten the output
         x = x.view(-1, 60 * 60 * 96)
 
         # Apply the dense layers
         x = daf(self.fc1(x))
-        base_int = torch.squeeze(self.daf(self.fc2(base_int)))
+        base_int = torch.squeeze(daf(self.fc2(base_int)))
 
         # Concatenate the base intensity with the output of the dense layer
         x = torch.cat([x, base_int], dim=1)

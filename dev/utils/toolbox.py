@@ -3180,7 +3180,12 @@ class AI:
         # get sanitized timestamps
         valid_steps = sanitize_timestamps(self.__parent.timestamps, self.ds)
 
-        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        # Create a projection with Cartopy
+        projection = ccrs.PlateCarree()
+
+        fig, ax = plt.subplots(
+            figsize=figsize, dpi=dpi, subplot_kw={"projection": projection}
+        )
 
         minn, maxx = (
             self.ds[var].min().values,
@@ -3196,7 +3201,10 @@ class AI:
 
         plot_data = data.isel({time_coord: 0, leadtime_coord: 0})
         plot_data = plot_data.where(plot_data.notnull(), drop=True)
-        plot_object = plot_data.plot(ax=ax, **plot_kwargs)
+        plot_object = plot_data.plot(ax=ax, transform=projection, **plot_kwargs)
+
+        # Add Cartopy outlines or features
+        ax.coastlines()  # Adds coastlines
 
         cbar = fig.colorbar(plot_object, orientation="horizontal", ax=ax, pad=0.1)
         textcolor = kwargs.get("textcolor", np.array([242, 240, 228]) / 255)
@@ -3208,16 +3216,12 @@ class AI:
         )
         plt.setp(plt.getp(cbar.ax.axes, "xticklabels"), color=textcolor, fontsize=6)
 
-        # # Set the colorbar label color
-        # cbar.ax.yaxis.label.set_color(
-        #     textcolor
-        # )  # Adjust 'color_here' to your desired color
-        # # Set the colorbar tick color
-        # cbar.ax.yaxis.set_tick_params(
-        #     color=textcolor
-        # )  # Replace 'tick_color_here' with your desired color
-
         plot_facecolors(fig=fig, axes=ax, **kwargs)
+
+        fig.suptitle(
+            f"Tropical Cyclone {self.__parent.name.capitalize()} ({self.__parent.uid})",
+            color=textcolor,
+        )
 
         # Get the 0th time in YYYY-MM-DD from self.ds
         time = self.ds[time_coord].values[0].astype("datetime64[D]").astype(str)
@@ -3233,7 +3237,8 @@ class AI:
             time = self.ds[time_coord].values[frame].astype("datetime64[D]").astype(str)
             plot_data = data.isel({time_coord: frame // 10, leadtime_coord: frame % 10})
             plot_data = plot_data.where(plot_data.notnull(), drop=True)
-            plot_data.plot(ax=ax, **plot_kwargs)
+            plot_data.plot(ax=ax, transform=projection, **plot_kwargs)
+            ax.coastlines()
             plot_facecolors(fig=fig, axes=ax)
             ax.set_title(
                 f"{var} forecast ({time}) for leadtime +{data.isel({leadtime_coord: frame%10})[leadtime_coord].values.item()}h"
@@ -3245,10 +3250,38 @@ class AI:
             update,
             np.arange(1, valid_steps.size, 1),
             blit=False,
-            interval=400,
+            interval=800,
         )
 
         ani.save(save_path)
 
 
-# %%
+# # %%
+# # Import necessary libraries
+# import xarray as xr
+# import matplotlib.pyplot as plt
+# import cartopy.crs as ccrs
+# import cartopy.feature as cfeature
+
+# # Load your dataset
+# data = xr.open_dataset('your_data.nc')
+# variable_to_plot = data['your_variable']
+
+# # Create a projection with Cartopy
+# projection = ccrs.PlateCarree()  # Example projection
+
+# # Create a matplotlib figure and axis with the projection
+# fig, ax = plt.subplots(subplot_kw={'projection': projection})
+
+# # Plot your data with xarray, passing the Cartopy axis
+# variable_to_plot.plot(ax=ax, transform=projection)  # Ensure you use the correct transform
+
+# # Add Cartopy outlines or features
+# ax.coastlines()  # Adds coastlines
+# ax.add_feature(cfeature.BORDERS)  # Adds country borders, for example
+
+# # Optionally, set extent or other features
+# ax.set_extent([lon_min, lon_max, lat_min, lat_max])
+
+# # Show the plot
+# plt.show()

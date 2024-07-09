@@ -3208,7 +3208,7 @@ class AI:
         dpi = kwargs.get("dpi", 150)
         save_path = kwargs.get(
             "save_path",
-            f"/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/{self.__parent.uid}_{var}_animation.gif",
+            f"/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/{self.__parent.uid}.{self.model}_{var}_animation.gif",
         )
 
         # Check if the dataset doesn't exist in the object

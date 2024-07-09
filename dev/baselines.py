@@ -805,26 +805,75 @@ class SimpleCNN(nn.Module):
     def __str__(self):
         return "Simple_CNN"
 
-    def __init__(self, **kwargs):
+    def __init__(self, num_scalars, fc_width=512, cnn_widths=[32, 64, 128], **kwargs):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(5, 32, kernel_size=3, stride=1, padding=1)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
-        self.fc1 = nn.Linear(128 * 30 * 30, 512)
-        # We will encode the baseline intensity with a dense layer
-        self.fc2 = nn.Linear(2, 16)
-        self.fc3 = nn.Linear(512 + 16, 2 if kwargs.get("deterministic", False) else 4)
+        self.pool_size = kwargs.get("pool_size", 2)
+        self.pool_stride = kwargs.get("pool_stride", 2)
+        self.kernel_size = kwargs.get("kernel_size", [3, 3, 3])
+        self.strides = kwargs.get("strides", [1, 1, 1])
+        self.paddings = kwargs.get("paddings", [1, 1, 1])
 
-    def forward(self, x, base_int):
+        # Output size = (input_size - kernel_size + 2*padding) / stride + 1
+        # after pooling output size = output_size / (pool_size * pool_stride)
+        self.size = 241
+        self.conv1 = nn.Conv2d(
+            5,  # AI outputs only include 5 variables (u, v, mslp, t_850, z_500)
+            cnn_widths[0],
+            kernel_size=self.kernel_size[0],
+            stride=self.strides[0],
+            padding=self.paddings[0],
+        )
+        self.size = (
+            self.size - self.kernel_size[0] + 2 * self.paddings[0]
+        ) / self.strides[0] + 1
+        self.pool = nn.MaxPool2d(kernel_size=self.pool_size, stride=self.pool_stride)
+        self.size = self.size // (self.pool_size * self.pool_stride)
+
+        self.conv2 = nn.Conv2d(
+            cnn_widths[0],
+            cnn_widths[1],
+            kernel_size=self.kernel_size[1],
+            stride=self.strides[1],
+            padding=self.paddings[1],
+        )
+        self.size = (
+            self.size - self.kernel_size[1] + 2 * self.paddings[1]
+        ) / self.strides[1] + 1
+        # pooling after each layer changes size
+        self.size = self.size // (self.pool_size * self.pool_stride)
+
+        self.conv3 = nn.Conv2d(
+            cnn_widths[1],
+            cnn_widths[2],
+            kernel_size=self.kernel_size[2],
+            stride=self.strides[2],
+            padding=self.paddings[2],
+        )
+        self.size = (
+            self.size - self.kernel_size[2] + 2 * self.paddings[2]
+        ) / self.strides[2] + 1
+        # pooling after each layer changes size
+        self.size = self.size // (self.pool_size * self.pool_stride)
+
+        # calculate the flat size
+        self.flat_size = int(cnn_widths[2] * self.size * self.size)
+        self.fc1 = nn.Linear(self.flat_size, fc_width)
+
+        # We will encode the baseline intensity with a dense layer
+        self.fc2 = nn.Linear(num_scalars, num_scalars * 8)
+        self.fc3 = nn.Linear(
+            fc_width + num_scalars * 8, 2 if kwargs.get("deterministic", False) else 4
+        )
+
+    def forward(self, x, scalars):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = self.pool(F.relu(self.conv3(x)))
-        x = x.view(-1, 128 * 30 * 30)
+        x = x.view(-1, self.flat_size)
         x = F.relu(self.fc1(x))
-        base_int = torch.squeeze(F.relu(self.fc2(base_int)))
+        scalars = torch.squeeze(F.relu(self.fc2(scalars)))
         # Concatenate the base intensity with the output of the dense layer
-        x = torch.cat([x, base_int], dim=1)
+        x = torch.cat([x, scalars], dim=1)
         x = self.fc3(x)
         return x
 

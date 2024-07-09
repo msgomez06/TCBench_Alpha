@@ -39,13 +39,18 @@ track = toolbox.tc_track(
     pres=storm[constants.ibtracs_cols._track_cols__metadata.get("PRES")].to_numpy(),
     datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
     storm_season=storm.SEASON.iloc[0],
+    ai_model="fourcastnetv2",
 )
 
 
 # %%
-if False:
+if True:
+    track.ai.load()
     track.ai.ds.z500.attrs["longname"] = "500 hPa Geopotential Height"
     track.ai.ds.t850.attrs["longname"] = "850 hPa Temperature"
+
+    # convert msl to hPa
+    track.ai.ds.msl = track.ai.ds.msl / 100
 
     track.ai.animate_var("u10", plot_kwargs={"cmap": "seismic"})
     track.ai.animate_var("msl", plot_kwargs={"cmap": "twilight"})

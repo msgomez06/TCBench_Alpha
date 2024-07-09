@@ -25,8 +25,69 @@ import metrics
 
 # Importing the sklearn metrics
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error
+import argparse
+
 
 if __name__ == "__main__":
+    # emulate system arguments
+    emulate = True
+    # Simulate command line arguments
+    if emulate:
+        sys.argv = [
+            "script_name",  # Traditionally the script name, but it's arbitrary in Jupyter
+            "--ai_model",
+            "fourcastnetv2",
+        ]
+
+    # Read in arguments with argparse
+    parser = argparse.ArgumentParser(description="Train a CNN model")
+    parser.add_argument(
+        "--datadir",
+        type=str,
+        default="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+        help="Directory where the data is stored",
+    )
+    parser.add_argument(
+        "--cache_dir",
+        type=str,
+        default="/scratch/mgomezd1/cache",
+        help="Directory where the cache is stored",
+    )
+
+    parser.add_argument(
+        "--result_dir",
+        type=str,
+        default="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/",
+        help="Directory where the results are stored",
+    )
+
+    parser.add_argument(
+        "--use_gpu",
+        type=bool,
+        default=True,
+        help="Whether to use GPU for training",
+    )
+
+    parser.add_argument(
+        "--ai_model",
+        type=str,
+        default="panguweather",
+    )
+
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="deterministic",
+    )
+
+    parser.add_argument(
+        "--deterministic_loss",
+        type=str,
+        default="MSE",
+    )
+
+    args = parser.parse_args()
+
     print("Imports successful", flush=True)
 
     # check if the context has been set for torch multiprocessing
@@ -34,15 +95,12 @@ if __name__ == "__main__":
         torch.multiprocessing.set_start_method("spawn")
 
     #  Setup
-    datadir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha"
-    cache_dir = "/scratch/mgomezd1/cache"
-    result_dir = (
-        "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/"
-    )
+    datadir = args.datadir
+    cache_dir = args.cache_dir + f"_{args.ai_model}"
+    result_dir = args.result_dir
 
-    use_gpu = True
     # Check for GPU availability
-    if torch.cuda.is_available() and use_gpu:
+    if torch.cuda.is_available() and args.use_gpu:
         calc_device = torch.device("cuda:0")
     else:
         calc_device = torch.device("cpu")
@@ -66,6 +124,7 @@ if __name__ == "__main__":
         datadir=datadir,
         test_strategy="custom",
         base_position=True,
+        ai_model=args.ai_model,
         # use_cached=False,
         # verbose=True,
         # debug=True,
@@ -97,6 +156,10 @@ if __name__ == "__main__":
 
     AI_scaler = None
     from_cache = True
+
+    # Make the cache directory if it doesn't exist
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
 
     fpath = os.path.join(cache_dir, "AI_scaler.pkl")
 
@@ -216,13 +279,13 @@ if __name__ == "__main__":
     # CNN = baselines.Regularized_Dilated_CNN(
     #     deterministic=True, dropout=0.05, dropout2d=0.05
     # ).to(calc_device)
-    # CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
-    CNN = baselines.Regularized_NonDil_CNN(
-        deterministic=True,
-        dropout=0.05,
-        dropout2d=0.05,
-        num_scalars=train_dataset.num_scalars,
-    ).to(calc_device)
+    CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
+    # CNN = baselines.Regularized_NonDil_CNN(
+    #     deterministic=True,
+    #     dropout=0.05,
+    #     dropout2d=0.05,
+    #     num_scalars=train_dataset.num_scalars,
+    # ).to(calc_device)
 
     optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-4)  # , weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CyclicLR(
@@ -327,160 +390,169 @@ if __name__ == "__main__":
         ) as f:
             pickle.dump(losses, f)
 
+    # plot the learning curves
+    fig, ax = plt.subplots()
+    ax.plot(train_losses, label="Train Loss", color=np.array([27, 166, 166]), alpha=0.8)
+    ax.plot(
+        val_losses, label="Validation Loss", color=np.array([191, 6, 92]), alpha=0.8
+    )
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel(f"Loss: {str(loss_func)}")
+
     # %%
 
-    def eval_prediction(
-        model,  # ML model
-        loader,  # Dataloader
-        target_scaler,  # Target scaler
-        baseline_pred,  # Baseline prediction
-        y_true,  # Ground truth
-        result_dir,  # Results directory
-        start_time,  # Start time
-        set_type,  # Type of dataset
-        data,  # Data dictionary
-        **kwargs,
-    ):
-        # Predict the validation data with the CNN model
-        with torch.no_grad():
-            y_hat = None
-            for AI_X, base_int, target in loader:
-                pred = model(AI_X, base_int)
-                if y_hat is None:
-                    y_hat = pred.cpu().numpy()
-                else:
-                    y_hat = np.concatenate([y_hat, pred.cpu().numpy()])
+    # def eval_prediction(
+    #     model,  # ML model
+    #     loader,  # Dataloader
+    #     target_scaler,  # Target scaler
+    #     baseline_pred,  # Baseline prediction
+    #     y_true,  # Ground truth
+    #     result_dir,  # Results directory
+    #     start_time,  # Start time
+    #     set_type,  # Type of dataset
+    #     data,  # Data dictionary
+    #     **kwargs,
+    # ):
+    #     # Predict the validation data with the CNN model
+    #     with torch.no_grad():
+    #         y_hat = None
+    #         for AI_X, base_int, target in loader:
+    #             pred = model(AI_X, base_int)
+    #             if y_hat is None:
+    #                 y_hat = pred.cpu().numpy()
+    #             else:
+    #                 y_hat = np.concatenate([y_hat, pred.cpu().numpy()])
 
-        # reverse transform y_hat
-        y_hat = target_scaler.inverse_transform(y_hat)
+    #     # reverse transform y_hat
+    #     y_hat = target_scaler.inverse_transform(y_hat)
 
-        #  Compute y_true, y_baseline
-        y_baseline = baseline_pred.compute()
+    #     #  Compute y_true, y_baseline
+    #     y_baseline = baseline_pred.compute()
 
-        #  Evaluation
-        # We will want to evaluate the model using the Root Mean Squared Error and
-        # the Mean Absolute Error, as well as the associated skill scores compared
-        # to the persistence model
+    #     #  Evaluation
+    #     # We will want to evaluate the model using the Root Mean Squared Error and
+    #     # the Mean Absolute Error, as well as the associated skill scores compared
+    #     # to the persistence model
 
-        global_performance = metrics.summarize_performance(
-            y_true,  # Ground truth
-            y_hat,  # Model prediction
-            y_baseline,  # Baseline, used for skill score calculations
-            [root_mean_squared_error, mean_absolute_error],
-        )
+    #     global_performance = metrics.summarize_performance(
+    #         y_true,  # Ground truth
+    #         y_hat,  # Model prediction
+    #         y_baseline,  # Baseline, used for skill score calculations
+    #         [root_mean_squared_error, mean_absolute_error],
+    #     )
 
-        # Plotting Global Performance
-        fig, axes = plt.subplots(
-            1, 2, figsize=(15, 5), dpi=150, gridspec_kw={"width_ratios": [2, 1]}
-        )
-        metrics.plot_performance(
-            global_performance,
-            axes,
-            model_name=f"{str(CNN)}",
-            baseline_name=kwargs.get("baseline_name", "Persistence"),
-        )
-        toolbox.plot_facecolors(fig=fig, axes=axes)
-        # Save the figure in the results directory
-        fig.savefig(
-            os.path.join(
-                result_dir,
-                f"CNN_global_performance_{str(model)}_{start_time}_{set_type}.png",
-            )
-        )
+    #     # Plotting Global Performance
+    #     fig, axes = plt.subplots(
+    #         1, 2, figsize=(15, 5), dpi=150, gridspec_kw={"width_ratios": [2, 1]}
+    #     )
+    #     metrics.plot_performance(
+    #         global_performance,
+    #         axes,
+    #         model_name=f"{str(CNN)}",
+    #         baseline_name=kwargs.get("baseline_name", "Persistence"),
+    #     )
+    #     toolbox.plot_facecolors(fig=fig, axes=axes)
+    #     # Save the figure in the results directory
+    #     fig.savefig(
+    #         os.path.join(
+    #             result_dir,
+    #             f"CNN_global_performance_{str(model)}_{start_time}_{set_type}.png",
+    #         )
+    #     )
 
-        # Per leadtime analysis
-        unique_leads = data[set_type]["leadtime"].compute()
-        num_leads = len(unique_leads)
-        # set up the axes for the lead time plots
+    #     # Per leadtime analysis
+    #     unique_leads = data[set_type]["leadtime"].compute()
+    #     num_leads = len(unique_leads)
+    #     # set up the axes for the lead time plots
 
-        fig, axes = plt.subplots(
-            num_leads,  # One row per lead time
-            2,
-            figsize=(15, 5 * num_leads),
-            dpi=150,
-            gridspec_kw={"width_ratios": [2, 1]},
-        )
-        for idx, lead in enumerate(unique_leads):
-            lead_mask = data[set_type]["leadtime"] == lead
+    #     fig, axes = plt.subplots(
+    #         num_leads,  # One row per lead time
+    #         2,
+    #         figsize=(15, 5 * num_leads),
+    #         dpi=150,
+    #         gridspec_kw={"width_ratios": [2, 1]},
+    #     )
+    #     for idx, lead in enumerate(unique_leads):
+    #         lead_mask = data[set_type]["leadtime"] == lead
 
-            y_true_lead = y_true[lead_mask]
-            y_hat_lead = y_hat[lead_mask]
-            y_baseline_lead = y_baseline[lead_mask]
+    #         y_true_lead = y_true[lead_mask]
+    #         y_hat_lead = y_hat[lead_mask]
+    #         y_baseline_lead = y_baseline[lead_mask]
 
-            lead_performance = metrics.summarize_performance(
-                y_true_lead,  # Ground truth
-                y_hat_lead,  # Model prediction
-                y_baseline_lead,  # Baseline, used for skill score calculations
-                [root_mean_squared_error, mean_absolute_error],
-            )
+    #         lead_performance = metrics.summarize_performance(
+    #             y_true_lead,  # Ground truth
+    #             y_hat_lead,  # Model prediction
+    #             y_baseline_lead,  # Baseline, used for skill score calculations
+    #             [root_mean_squared_error, mean_absolute_error],
+    #         )
 
-            metrics.plot_performance(
-                lead_performance,
-                axes[idx],
-                model_name=f"{str(model)}",
-                baseline_name="Persistence",
-            )
-            toolbox.plot_facecolors(fig=fig, axes=axes[idx])
+    #         metrics.plot_performance(
+    #             lead_performance,
+    #             axes[idx],
+    #             model_name=f"{str(model)}",
+    #             baseline_name="Persistence",
+    #         )
+    #         toolbox.plot_facecolors(fig=fig, axes=axes[idx])
 
-            # Append the lead time to the title for both axes
-            axes[idx][0].set_title(
-                f"\n Lead Time: +{lead}h \n" + axes[idx][0].get_title()
-            )
-            axes[idx][1].set_title(
-                f"\n Lead Time: +{lead}h \n" + axes[idx][1].get_title()
-            )
+    #         # Append the lead time to the title for both axes
+    #         axes[idx][0].set_title(
+    #             f"\n Lead Time: +{lead}h \n" + axes[idx][0].get_title()
+    #         )
+    #         axes[idx][1].set_title(
+    #             f"\n Lead Time: +{lead}h \n" + axes[idx][1].get_title()
+    #         )
 
-        # Save the figure in the results directory
-        fig.savefig(
-            os.path.join(
-                result_dir,
-                f"CNN_lead_performance_{str(model)}_{start_time}_{set_type}.png",
-            )
-        )
+    #     # Save the figure in the results directory
+    #     fig.savefig(
+    #         os.path.join(
+    #             result_dir,
+    #             f"CNN_lead_performance_{str(model)}_{start_time}_{set_type}.png",
+    #         )
+    #     )
 
-    # Evaluate on the validation set
+    # # Evaluate on the validation set
 
-    # We want to compare the model to a simple baseline, in this case
-    # the persistence model. Since our target is delta, persistence
-    # is simply 0
-    y_persistence = np.zeros_like(valid_delta)
+    # # We want to compare the model to a simple baseline, in this case
+    # # the persistence model. Since our target is delta, persistence
+    # # is simply 0
+    # y_persistence = np.zeros_like(valid_delta)
 
-    #  Evaluation
-    # Let's start by loading the validation outputs into a variable
-    # for easier access
-    y_true = valid_delta
+    # #  Evaluation
+    # # Let's start by loading the validation outputs into a variable
+    # # for easier access
+    # y_true = valid_delta
 
-    eval_prediction(
-        model=CNN,
-        loader=validation_loader,
-        target_scaler=target_scaler,
-        baseline_pred=y_persistence,
-        y_true=y_true,
-        result_dir=result_dir,
-        start_time=start_time,
-        set_type="validation",
-        data=data,
-    )
-    # Evaluate on the training set
+    # eval_prediction(
+    #     model=CNN,
+    #     loader=validation_loader,
+    #     target_scaler=target_scaler,
+    #     baseline_pred=y_persistence,
+    #     y_true=y_true,
+    #     result_dir=result_dir,
+    #     start_time=start_time,
+    #     set_type="validation",
+    #     data=data,
+    # )
+    # # Evaluate on the training set
 
-    # We want to compare the model to a simple baseline, in this case
-    # the persistence model. Since our target is delta, persistence
-    # is simply 0
-    y_persistence = np.zeros_like(train_delta)
+    # # We want to compare the model to a simple baseline, in this case
+    # # the persistence model. Since our target is delta, persistence
+    # # is simply 0
+    # y_persistence = np.zeros_like(train_delta)
 
-    #  Evaluation
-    # Let's start by loading the validation outputs into a variable
-    # for easier access
-    y_true = train_delta
+    # #  Evaluation
+    # # Let's start by loading the validation outputs into a variable
+    # # for easier access
+    # y_true = train_delta
 
-    eval_prediction(
-        model=CNN,
-        loader=train_loader,
-        target_scaler=target_scaler,
-        baseline_pred=y_persistence,
-        y_true=y_true,
-        result_dir=result_dir,
-        start_time=start_time,
-        set_type="train",
-        data=data,
-    )
+    # eval_prediction(
+    #     model=CNN,
+    #     loader=train_loader,
+    #     target_scaler=target_scaler,
+    #     baseline_pred=y_persistence,
+    #     y_true=y_true,
+    #     result_dir=result_dir,
+    #     start_time=start_time,
+    #     set_type="train",
+    #     data=data,
+    # )

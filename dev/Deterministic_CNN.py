@@ -42,14 +42,10 @@ if __name__ == "__main__":
 
     use_gpu = True
     # Check for GPU availability
-    if torch.cuda.device_count() > 0 and use_gpu:
+    if torch.cuda.is_available() and use_gpu:
         calc_device = torch.device("cuda:0")
     else:
         calc_device = torch.device("cpu")
-        # # Ask the user if they want to continue even though there's no GPU
-        # print("No GPU available, continue with CPU? (y/n)")
-        # if input() != "y":
-        #     sys.exit()
 
     num_cores = int(subprocess.check_output(["nproc"], text=True).strip())
 
@@ -69,6 +65,7 @@ if __name__ == "__main__":
         },
         datadir=datadir,
         test_strategy="custom",
+        base_position=True,
         # use_cached=False,
         # verbose=True,
         # debug=True,
@@ -126,6 +123,20 @@ if __name__ == "__main__":
     base_scaler = StandardScaler()
     base_scaler.fit(data["train"]["base_intensity"])
 
+    # and one for the base position
+    print("Encoding base position...", flush=True)
+    train_positions = mlf.latlon_to_sincos(data["train"]["base_position"]).compute()
+    valid_positions = mlf.latlon_to_sincos(
+        data["validation"]["base_position"]
+    ).compute()
+
+    # We'll encode the leadtime by dividing it by the max leadtime in the dataset
+    # which is 168 hours
+    print("Encoding leadtime...", flush=True)
+    max_train_ldt = data["train"]["leadtime"].max().compute()
+    train_leadtimes = (data["train"]["leadtime"] / max_train_ldt).compute()
+    validation_leadtimes = (data["validation"]["leadtime"] / max_train_ldt).compute()
+
     # We also want to precalculate the delta intensity for the
     # training and validation sets
     print("Calculating target (i.e., delta intensities)...", flush=True)
@@ -148,24 +159,10 @@ if __name__ == "__main__":
     )
     dask.config.set(scheduler="synchronous")
 
-    # We then instantiate the DaskDataset class for the training and validation sets
-    print("Creating training DaskDataset...", flush=True)
-    train_dataset = mlf.DaskDataset(
-        AI_X=data["train"]["inputs"],
-        AI_scaler=AI_scaler,
-        base_int=data["train"]["base_intensity"],
-        base_scaler=base_scaler,
-        target_data=train_delta,
-        target_scaler=target_scaler,
-        device=calc_device,
-        cachedir="/scratch/mgomezd1/cache",  # os.path.join(datadir, 'cache'),
-        zarr_name="train",
-        overwrite=False,
-        num_workers=num_cores,
-        # load_into_memory=True,
-    )
-
-    print("Creating validation DaskDataset...", flush=True)
+    # We then instantiate the DaskDataset class for the training and validation sets.
+    # Validation first because it's smaller and will be used to evaluate if the code
+    # is working as expected
+    print("Creating validation DaskDataset and dataloader...", flush=True)
     validation_dataset = mlf.DaskDataset(
         AI_X=data["validation"]["inputs"],
         AI_scaler=AI_scaler,
@@ -178,19 +175,39 @@ if __name__ == "__main__":
         zarr_name="validation",
         overwrite=False,
         num_workers=num_cores,
+        track=valid_positions,
+        leadtimes=validation_leadtimes,
         # load_into_memory=True,
     )
 
-    # And make the respective dataloaders
-    print("Creating dataloaders...", flush=True)
-    train_loader = mlf.make_dataloader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
-    )
     validation_loader = mlf.make_dataloader(
         validation_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
+    )
+
+    input()
+
+    print("Creating training DaskDataset and dataloader...", flush=True)
+    train_dataset = mlf.DaskDataset(
+        AI_X=data["train"]["inputs"],
+        AI_scaler=AI_scaler,
+        base_int=data["train"]["base_intensity"],
+        base_scaler=base_scaler,
+        target_data=train_delta,
+        target_scaler=target_scaler,
+        device=calc_device,
+        cachedir="/scratch/mgomezd1/cache",  # os.path.join(datadir, 'cache'),
+        zarr_name="train",
+        overwrite=False,
+        num_workers=num_cores,
+        track=train_positions,
+        leadtimes=train_leadtimes,
+        # load_into_memory=True,
+    )
+    train_loader = mlf.make_dataloader(
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
     )
 
     #  Model
@@ -201,7 +218,10 @@ if __name__ == "__main__":
     # ).to(calc_device)
     # CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
     CNN = baselines.Regularized_NonDil_CNN(
-        deterministic=True, dropout=0.05, dropout2d=0.05
+        deterministic=True,
+        dropout=0.05,
+        dropout2d=0.05,
+        num_scalars=train_dataset.num_scalars,
     ).to(calc_device)
 
     optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-4)  # , weight_decay=1e-4)
@@ -434,7 +454,7 @@ if __name__ == "__main__":
         model=CNN,
         loader=validation_loader,
         target_scaler=target_scaler,
-        baseline_pred=da.from_array(y_persistence),
+        baseline_pred=y_persistence,
         y_true=y_true,
         result_dir=result_dir,
         start_time=start_time,
@@ -457,7 +477,7 @@ if __name__ == "__main__":
         model=CNN,
         loader=train_loader,
         target_scaler=target_scaler,
-        baseline_pred=da.from_array(y_persistence),
+        baseline_pred=y_persistence,
         y_true=y_true,
         result_dir=result_dir,
         start_time=start_time,

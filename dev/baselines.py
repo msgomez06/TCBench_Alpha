@@ -520,11 +520,14 @@ class TC_DeltaIntensity_nonDilCNN(nn.Module):
     def __str__(self):
         return "Non_Dilated_CNN"
 
-    def __init__(self, **kwargs):
+    def __init__(
+        self,
+        num_scalars,  # number of scalar inputs, e.g., base intensity, track, etc.
+        **kwargs,
+    ):
         super(TC_DeltaIntensity_nonDilCNN, self).__init__()
 
         # Assume inputs have 241x241 dimensions in channels (u, v, mslp, t_850, z_500)
-
         conv_depths = kwargs.get("depths", [32, 16, 16, 64, 96])
 
         self.pool_size = kwargs.get("pool_size", 2)
@@ -560,13 +563,15 @@ class TC_DeltaIntensity_nonDilCNN(nn.Module):
         # deviation of the intensity change, both for wind and pressure
         self.fc1 = nn.Linear(conv_depths[4] * 60 * 60, 128)
 
-        # We will encode the baseline intensity with a dense layer
-        self.fc2 = nn.Linear(2, 16)
+        # We will encode the scalars with a dense layer
+        self.fc2 = nn.Linear(num_scalars, num_scalars * 8)
 
         # And make the prediction from the two dense layers
-        self.fc3 = nn.Linear(128 + 16, 2 if kwargs.get("deterministic", False) else 4)
+        self.fc3 = nn.Linear(
+            128 + num_scalars * 8, 2 if kwargs.get("deterministic", False) else 4
+        )
 
-    def forward(self, x, base_int):
+    def forward(self, x, scalars):
 
         caf = F.leaky_relu
         daf = F.leaky_relu
@@ -589,10 +594,10 @@ class TC_DeltaIntensity_nonDilCNN(nn.Module):
 
         # Apply the dense layers
         x = daf(self.fc1(x))
-        base_int = torch.squeeze(daf(self.fc2(base_int)))
+        scalars = torch.squeeze(daf(self.fc2(scalars)))
 
         # Concatenate the base intensity with the output of the dense layer
-        x = torch.cat([x, base_int], dim=1)
+        x = torch.cat([x, scalars], dim=1)
 
         x = self.fc3(x)
 
@@ -695,10 +700,10 @@ class Regularized_NonDil_CNN(TC_DeltaIntensity_nonDilCNN):
 
     def __init__(self, **kwargs):
         super(Regularized_NonDil_CNN, self).__init__(**kwargs)
-        self.dropout2d = kwargs.get("dropout2d", 0.25)
-        self.dropout = kwargs.get("dropout", 0.25)
+        self.dropout2d = kwargs.get("dropout2d", 0.05)
+        self.dropout = kwargs.get("dropout", 0.05)
 
-    def forward(self, x, base_int):
+    def forward(self, x, scalars):
         caf = F.leaky_relu
         daf = F.leaky_relu
         pooling = F.max_pool2d
@@ -724,11 +729,11 @@ class Regularized_NonDil_CNN(TC_DeltaIntensity_nonDilCNN):
         # Apply the dense layers
         x = daf(self.fc1(x))
         x = F.dropout(x, p=self.dropout)
-        base_int = torch.squeeze(daf(self.fc2(base_int)))
-        base_int = F.dropout(base_int, p=self.dropout)
+        scalars = torch.squeeze(daf(self.fc2(scalars)))
+        scalars = F.dropout(scalars, p=self.dropout)
 
         # Concatenate the base intensity with the output of the dense layer
-        x = torch.cat([x, base_int], dim=1)
+        x = torch.cat([x, scalars], dim=1)
 
         x = self.fc3(x)
 

@@ -83,7 +83,11 @@ class Data_Collection:
     def _check_vars(self, var_type: str):
         # Check what variables are available for each variable type
         var_path = os.path.join(self.data_path, var_type)
-        var_list = os.listdir(var_path)
+
+        if "var_list" in dir(self):
+            var_list = self.var_list
+        else:
+            var_list = os.listdir(var_path)
 
         var_dictionary = {}
         global_year_list = []
@@ -97,12 +101,15 @@ class Data_Collection:
             file_list = sorted(os.listdir(folder_path))
 
             avail_years = []
-            # Assert that all files are nc files
+            # Assert that all files are nc files and add the years to the list
             for file in file_list:
                 assert (
                     file.split(".")[-1] == self.file_type
                 ), f"{file} in {folder_path} is not a(n) {self.file_type} file"
-                avail_years.append(file.split(".")[0].split("_")[1])
+
+                year = file.split(".")[0].split("_")[1][:4]
+                if year not in avail_years:
+                    avail_years.append(file.split(".")[0].split("_")[1][:4])
             global_year_list += avail_years
             var_dictionary[var] = sorted(avail_years)
         global_year_list = sorted(list(set(global_year_list)))
@@ -763,12 +770,12 @@ if __name__ == "__main__":
 
     # print(dc.meta_dfs)
 
-    test = AI_Data_Collection(
-        "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/AI-milton/panguweather"
-    )
-    datetimes = np.load(
-        "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/timestamps_sample.npy"
-    )
+    # test = AI_Data_Collection(
+    #     "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/AI-milton/panguweather"
+    # )
+    # datetimes = np.load(
+    #     "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/timestamps_sample.npy"
+    # )
     tst = test.retrieve_ds(datetimes)
 
     # for i in range(tst.time.size // 4):

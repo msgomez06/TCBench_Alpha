@@ -90,12 +90,21 @@ class DaskDataset(Dataset):
 
         # self.AI_X = da.map_blocks(
         #     self.AI_scaler.transform, self.AI_X, dtype=np.float32, chunks=self.AI_X.chunksize)
-        self.base_int = da.map_blocks(
+        self.scalars = da.map_blocks(
             self.base_scaler.transform,
             self.base_int,
             dtype=np.float32,
             chunks=self.base_int.chunksize,
         ).compute()
+
+        if "track" in kwargs:
+            self.scalars = np.hstack([self.scalars, kwargs["track"]])
+
+        if "leadtimes" in kwargs:
+            self.scalars = np.hstack([self.scalars, kwargs["leadtimes"]])
+
+        self.num_scalars = self.scalars.shape[1]
+
         self.target_data = da.map_blocks(
             self.target_scaler.transform,
             self.target_data,
@@ -105,10 +114,7 @@ class DaskDataset(Dataset):
 
         if kwargs.get("load_into_memory", False):
             self.AI_X = self.AI_X.compute()
-            self.base_int = self.base_int.compute()
-            self.target_data = self.target_data.compute()
         else:
-
             zarr_name = kwargs.get("zarr_name", "unnamed")
             cachedir = kwargs.get("cachedir", os.path.join(os.getcwd(), "cache"))
             zarr_path = os.path.join(cachedir, f"{zarr_name}.zarr")
@@ -138,25 +144,14 @@ class DaskDataset(Dataset):
 
     def __getitem__(self, idx):
         # # Load the specific data points needed for this index
-        # # Convert them to PyTorch tensors
-        # AI_sample = torch.tensor(self.AI_X[idx].compute(), dtype=torch.float32)
-        # base_int_sample = torch.tensor(self.base_int[idx], dtype=torch.float32)
-        # target_sample = torch.tensor(self.target_data[idx], dtype=torch.float32)
-
-        # return AI_sample, base_int_sample, target_sample
-
-        # with warnings.catch_warnings():
-        #     warnings.simplefilter("ignore")  # Ignore all warnings
         AI_sample = self.AI_X[idx]
-        base_int_sample = self.base_int[idx]
+        scalar_sample = self.scalars[idx]
         target_sample = self.target_data[idx]
-        if base_int_sample.ndim == 1:
-            base_int_sample = base_int_sample[None, :]
+        if scalar_sample.ndim == 1:
+            scalar_sample = scalar_sample[None, :]
 
-        sample = (AI_sample, base_int_sample, target_sample)
+        sample = (AI_sample, scalar_sample, target_sample)
 
-        # sample = self.data_processor(AI_sample, base_int_sample)
-        # sample = (*sample, target_sample)
         output = []
         for array in sample:
             if isinstance(array, np.ndarray):
@@ -174,3 +169,13 @@ class DaskDataset(Dataset):
 def make_dataloader(dataset, **kwargs):
     dataset
     return DataLoader(dataset, **kwargs)
+
+
+def latlon_to_sincos(positions):
+    lat = positions[:, 0]
+    lon = positions[:, 1]
+    lat_rad = np.radians(lat)
+    lon_rad = np.radians(lon)
+    return np.stack(
+        [np.sin(lat_rad), np.cos(lat_rad), np.sin(lon_rad), np.cos(lon_rad)], axis=1
+    )

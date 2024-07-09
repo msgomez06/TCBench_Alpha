@@ -41,19 +41,18 @@ track = toolbox.tc_track(
     storm_season=storm.SEASON.iloc[0],
 )
 
-track.ai.animate_var("u10", plot_kwargs={"cmap": "seismic"})
 
 # %%
+if False:
+    track.ai.ds.z500.attrs["longname"] = "500 hPa Geopotential Height"
+    track.ai.ds.t850.attrs["longname"] = "850 hPa Temperature"
 
-track.ai.ds.z500.attrs["longname"] = "500 hPa Geopotential Height"
-track.ai.ds.t850.attrs["longname"] = "850 hPa Temperature"
+    track.ai.animate_var("u10", plot_kwargs={"cmap": "seismic"})
+    track.ai.animate_var("msl", plot_kwargs={"cmap": "twilight"})
+    track.ai.animate_var("v10", plot_kwargs={"cmap": "seismic"})
 
-track.ai.animate_var("u10", plot_kwargs={"cmap": "seismic"})
-track.ai.animate_var("msl", plot_kwargs={"cmap": "twilight"})
-track.ai.animate_var("v10", plot_kwargs={"cmap": "seismic"})
-
-track.ai.animate_var("z500", plot_kwargs={"cmap": "twilight"})
-track.ai.animate_var("t850", plot_kwargs={"cmap": "seismic"})
+    track.ai.animate_var("z500", plot_kwargs={"cmap": "twilight"})
+    track.ai.animate_var("t850", plot_kwargs={"cmap": "seismic"})
 
 # track.filepath = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha/2019/"
 

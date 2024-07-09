@@ -579,6 +579,7 @@ def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
             "data": [],
             "intensity_deltas": [],
             "base_intensities": [],
+            "base_times": [],
         }
         for storm in eval(dataset):
             # Get the 6 hourly timestamps
@@ -625,14 +626,17 @@ def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
 
                 # Let's initialize the base intensities with nans
                 base_intensities = np.full_like(target_intensities, np.nan)
+                base_times = np.full_like(target_times, np.nan)
                 mask = np.isin(time, base_times)
 
                 base_intensities = intensity[mask]
+                base_times = time[mask]
 
                 intensity_deltas = target_intensities - base_intensities
 
                 rolling_mask = np.isin(base_times, rolling_timestamps[:, -1])
                 rolling_base = base_intensities[rolling_mask]
+                rolling_time = base_times[rolling_mask]
                 rolling_delta = intensity_deltas[rolling_mask]
 
                 data_series = np.full(
@@ -647,10 +651,14 @@ def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
                 data_check = np.any(np.any(np.isnan(data_series), axis=2), axis=1)
                 delta_check = np.any(np.isnan(rolling_delta), axis=1)
                 base_check = np.any(np.isnan(rolling_base), axis=1)
-                check = np.any(np.vstack([data_check, delta_check, base_check]), axis=0)
+                time_check = np.any(np.isnan(rolling_time))
+                check = np.any(
+                    np.vstack([data_check, delta_check, base_check, time_check]), axis=0
+                )
 
                 rolling_delta = rolling_delta[~check]
                 rolling_base = rolling_base[~check]
+                roilling_time = rolling_time[~check]
                 data_series = data_series[~check]
 
                 if data_series.shape[-1] != len(
@@ -664,10 +672,12 @@ def get_timeseries_sets(splits: dict, season_dict: dict, **kwargs):
                     setdata["data"].append(data_series)
                     setdata["intensity_deltas"].append(rolling_delta)
                     setdata["base_intensities"].append(rolling_base)
+                    setdata["base_times"].append(rolling_time)
 
         setdata["data"] = np.vstack(setdata["data"])
         setdata["intensity_deltas"] = np.vstack(setdata["intensity_deltas"])
         setdata["base_intensities"] = np.vstack(setdata["base_intensities"])
+        setdata["base_times"] = np.vstack(setdata["base_times"])
         data_dict[dataset] = setdata
     return data_dict
 
@@ -838,6 +848,8 @@ def get_ai_sets(splits: dict, **kwargs):
 
             if kwargs.get("base_intensity", True):
                 intensity = None
+                if kwargs.get("base_position", False):
+                    position = None
 
             # Parallel processing
             if kwargs.get("parallel", True):
@@ -848,6 +860,11 @@ def get_ai_sets(splits: dict, **kwargs):
 
                         def processor(storm, **kwargs):
                             result = storm.ai.serve(**kwargs)
+
+                            if kwargs.get("base_position", False):
+                                assert kwargs.get(
+                                    "base_intensity", True
+                                ), "Base position requires that the base intensity be requested. Set base_intensity to True."
 
                             if (
                                 kwargs.get("base_intensity", True)
@@ -868,7 +885,17 @@ def get_ai_sets(splits: dict, **kwargs):
                                     ]
                                 ).T
 
-                                result = (*result, base_intensity)
+                                if kwargs.get("base_position", False):
+                                    base_position = np.vstack(
+                                        [
+                                            storm.track[indices, 0].astype(float),
+                                            storm.track[indices, 1].astype(float),
+                                        ]
+                                    ).T
+
+                                    result = (*result, base_intensity, base_position)
+                                else:
+                                    result = (*result, base_intensity)
 
                                 if progress:
                                     print(".", end="", flush=True)
@@ -886,7 +913,17 @@ def get_ai_sets(splits: dict, **kwargs):
 
                     for result in temp_data:
                         if kwargs.get("base_intensity", True):
-                            inputs, outputs, t, leads, base_intensity = result
+                            if kwargs.get("base_position", False):
+                                (
+                                    inputs,
+                                    outputs,
+                                    t,
+                                    leads,
+                                    base_intensity,
+                                    base_position,
+                                ) = result
+                            else:
+                                inputs, outputs, t, leads, base_intensity = result
                         else:
                             inputs, outputs, t, leads = result
 
@@ -896,6 +933,8 @@ def get_ai_sets(splits: dict, **kwargs):
                             t_data = t
                             lead_data = leads
                             if kwargs.get("base_intensity", True):
+                                if kwargs.get("base_position", False):
+                                    position = base_position
                                 intensity = base_intensity
                         else:
                             input_data = da.vstack((input_data, inputs))
@@ -904,6 +943,8 @@ def get_ai_sets(splits: dict, **kwargs):
                             lead_data = np.hstack((lead_data, leads))
                             if kwargs.get("base_intensity", True):
                                 intensity = da.vstack((intensity, base_intensity))
+                                if kwargs.get("base_position", False):
+                                    position = da.vstack((position, base_position))
 
             # Serial processing
             else:
@@ -942,11 +983,13 @@ def get_ai_sets(splits: dict, **kwargs):
             data[key] = {
                 "inputs": input_data,
                 "outputs": target_data,
-                "time": t_data,
-                "leadtime": lead_data,
+                "time": t_data[:,None],
+                "leadtime": lead_data[:,None],
             }
             if kwargs.get("base_intensity", True):
                 data[key]["base_intensity"] = intensity
+                if kwargs.get("base_position", False):
+                    data[key]["base_position"] = position
 
     return sets, data
 

@@ -98,7 +98,6 @@ if __name__ == "__main__":
     # We will want to normalize the inputs for the model
     # to work properly. We will use the AI_StandardScaler for this
     # purpose
-
     AI_scaler = None
     from_cache = True
 
@@ -334,6 +333,10 @@ if __name__ == "__main__":
 
         # reverse transform y_hat
         y_hat = target_scaler.inverse_transform(y_hat)
+        y_mean = y_hat[:, ::2]
+        y_std = y_hat[:, 1::2]
+        y_lower = y_mean - y_std
+        y_upper = y_mean + y_std
 
         #  Compute y_true, y_baseline
         y_baseline = baseline_pred.compute()

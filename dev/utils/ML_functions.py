@@ -61,7 +61,7 @@ class DaskDataset(Dataset):
         self.target_data = target_data
         self.set_name = kwargs.get("set_name", "unnamed")
 
-        self.chunk_size = kwargs.get("chunk_size", 32)
+        self.chunk_size = kwargs.get("chunk_size", 256)
 
         # # Attempt at optimizing dask array
         # self.AI_X = optimize(self.AI_X.rechunk((self.chunk_size, 5, 241, 241)))[0]

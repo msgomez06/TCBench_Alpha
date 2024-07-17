@@ -44,13 +44,13 @@ track = toolbox.tc_track(
 
 
 # %%
-if True:
+if False:
     track.ai.load()
     track.ai.ds.z500.attrs["longname"] = "500 hPa Geopotential Height"
     track.ai.ds.t850.attrs["longname"] = "850 hPa Temperature"
 
     # convert msl to hPa
-    track.ai.ds.msl = track.ai.ds.msl / 100
+    track.ai.ds["msl"] = track.ai.ds.msl / 100
 
     track.ai.animate_var("u10", plot_kwargs={"cmap": "seismic"})
     track.ai.animate_var("msl", plot_kwargs={"cmap": "twilight"})
@@ -77,24 +77,24 @@ if True:
 # track.animate_AI_ds(var="msl", plot_kwargs={"cmap": "twilight"})
 # track.animate_AI_ds(var="wind_speed", plot_kwargs={"cmap": "seismic"})
 # %%
-# data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
-# save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
+data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
 
-# dc = dlib.Data_Collection(data_dir)
+dc = dlib.Data_Collection(data_dir)
 
 # %%
-# track.process_data_collection(
-#     dc,
-#     ignore_vars=[
-#         "specific_cloud_ice_water_content",
-#         "specific_cloud_liquid_water_content",
-#         "specific_rain_water_content",
-#         "specific_snow_water_content",
-#         # "land_sea_mask",
-#     ],
-#     masktype="rect",
-#     circum_points=30,
-# )
+track.process_data_collection(
+    dc,
+    reanal_variables=[
+        "10m_u_component_of_wind",
+        "10m_v_component_of_wind",
+        "mean_sea_level_pressure",
+        "temperature",
+        "geopotential",
+    ],
+    masktype="rect",
+    circum_points=30,
+)
 
 # # %%
 # track.plot_track(

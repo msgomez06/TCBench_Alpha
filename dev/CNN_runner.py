@@ -1,3 +1,4 @@
+# %%
 #  Imports
 # OS and IO
 import os
@@ -27,16 +28,23 @@ import metrics
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error
 import argparse
 
-
 if __name__ == "__main__":
     # emulate system arguments
-    emulate = True
+    emulate = False
     # Simulate command line arguments
     if emulate:
         sys.argv = [
             "script_name",  # Traditionally the script name, but it's arbitrary in Jupyter
             "--ai_model",
             "fourcastnetv2",
+            # "--overwrite_cache",
+            # "True",
+            # "--min_leadtime",
+            # "6",
+            # "--max_leadtime",
+            # "24",
+            "--use_gpu",
+            "False",
         ]
 
     # Read in arguments with argparse
@@ -83,7 +91,37 @@ if __name__ == "__main__":
     parser.add_argument(
         "--deterministic_loss",
         type=str,
-        default="MSE",
+        default="RMSE",
+    )
+
+    parser.add_argument(
+        "--overwrite_cache",
+        type=bool,
+        default=False,
+    )
+
+    parser.add_argument(
+        "--verbose",
+        type=bool,
+        default=True,
+    )
+
+    parser.add_argument(
+        "--debug",
+        type=bool,
+        default=False,
+    )
+
+    parser.add_argument(
+        "--min_leadtime",
+        type=int,
+        default=6,
+    )
+
+    parser.add_argument(
+        "--max_leadtime",
+        type=int,
+        default=168,
     )
 
     args = parser.parse_args()
@@ -119,16 +157,27 @@ if __name__ == "__main__":
         {
             "train": years[:-2],
             "validation": years[-2:],
-            "test": [2020],
+            # "test": [2020],
         },
         datadir=datadir,
         test_strategy="custom",
         base_position=True,
         ai_model=args.ai_model,
-        # use_cached=False,
+        use_cached=not args.overwrite_cache,
         # verbose=True,
         # debug=True,
     )
+
+    # create a mask for the leadtimes
+    train_ldt_mask = (data["train"]["leadtime"] >= args.min_leadtime) & (
+        data["train"]["leadtime"] <= args.max_leadtime
+    )
+    train_ldt_mask = np.squeeze(train_ldt_mask.compute())
+
+    validation_ldt_mask = (data["validation"]["leadtime"] >= args.min_leadtime) & (
+        data["validation"]["leadtime"] <= args.max_leadtime
+    )
+    validation_ldt_mask = np.squeeze(validation_ldt_mask.compute())
 
     # sets, data = toolbox.get_ai_sets(
     #     {"train": [2014],"validation": [2015], }, # "test": [2020]},
@@ -155,7 +204,7 @@ if __name__ == "__main__":
     # purpose
 
     AI_scaler = None
-    from_cache = True
+    from_cache = not args.overwrite_cache
 
     # Make the cache directory if it doesn't exist
     if not os.path.exists(cache_dir):
@@ -184,27 +233,39 @@ if __name__ == "__main__":
     # We also want to train a scaler for the base intensity
     print("Fitting base intensity scaler...", flush=True)
     base_scaler = StandardScaler()
-    base_scaler.fit(data["train"]["base_intensity"])
+    base_scaler.fit(data["train"]["base_intensity"][train_ldt_mask])
 
     # and one for the base position
     print("Encoding base position...", flush=True)
-    train_positions = mlf.latlon_to_sincos(data["train"]["base_position"]).compute()
+    train_positions = mlf.latlon_to_sincos(
+        data["train"]["base_position"][train_ldt_mask]
+    ).compute()
     valid_positions = mlf.latlon_to_sincos(
-        data["validation"]["base_position"]
+        data["validation"]["base_position"][validation_ldt_mask]
     ).compute()
 
     # We'll encode the leadtime by dividing it by the max leadtime in the dataset
     # which is 168 hours
     print("Encoding leadtime...", flush=True)
-    max_train_ldt = data["train"]["leadtime"].max().compute()
-    train_leadtimes = (data["train"]["leadtime"] / max_train_ldt).compute()
-    validation_leadtimes = (data["validation"]["leadtime"] / max_train_ldt).compute()
+    max_train_ldt = data["train"]["leadtime"][train_ldt_mask].max().compute()
+    train_leadtimes = (
+        data["train"]["leadtime"][train_ldt_mask] / max_train_ldt
+    ).compute()
+    validation_leadtimes = (
+        data["validation"]["leadtime"][validation_ldt_mask] / max_train_ldt
+    ).compute()
 
     # We also want to precalculate the delta intensity for the
     # training and validation sets
     print("Calculating target (i.e., delta intensities)...", flush=True)
-    train_delta = data["train"]["outputs"] - data["train"]["base_intensity"]
-    valid_delta = data["validation"]["outputs"] - data["validation"]["base_intensity"]
+    train_delta = (
+        data["train"]["outputs"][train_ldt_mask]
+        - data["train"]["base_intensity"][train_ldt_mask]
+    )
+    valid_delta = (
+        data["validation"]["outputs"][validation_ldt_mask]
+        - data["validation"]["base_intensity"][validation_ldt_mask]
+    )
 
     # And make a scaler for the target data
     target_scaler = StandardScaler()
@@ -214,7 +275,18 @@ if __name__ == "__main__":
 
     # Let's define some hyperparameters
     batch_size = 32
-    loss_func = torch.nn.MSELoss()
+
+    # If the mode is not deterministic, we'll set the loss to CRPS
+    if args.mode != "deterministic":
+        loss_func = metrics.CRPS_ML
+    else:
+        if args.deterministic_loss == "RMSE":
+            loss_func = torch.nn.MSELoss()
+        elif args.deterministic_loss == "MAE":
+            loss_func = torch.nn.L1Loss()
+        else:
+            raise ValueError("Loss function not recognized.")
+
     num_workers = (
         int(num_cores * 2 / 3)
         if (calc_device == torch.device("cpu") and num_cores > 1)
@@ -227,16 +299,16 @@ if __name__ == "__main__":
     # is working as expected
     print("Creating validation DaskDataset and dataloader...", flush=True)
     validation_dataset = mlf.DaskDataset(
-        AI_X=data["validation"]["inputs"],
+        AI_X=data["validation"]["inputs"][validation_ldt_mask],
         AI_scaler=AI_scaler,
-        base_int=data["validation"]["base_intensity"],
+        base_int=data["validation"]["base_intensity"][validation_ldt_mask],
         base_scaler=base_scaler,
         target_data=valid_delta,
         target_scaler=target_scaler,
         device=calc_device,
-        cachedir="/scratch/mgomezd1/cache",  # os.path.join(datadir, 'cache'),
+        cachedir=cache_dir,
         zarr_name="validation",
-        overwrite=False,
+        overwrite=args.overwrite_cache,
         num_workers=num_cores,
         track=valid_positions,
         leadtimes=validation_leadtimes,
@@ -250,20 +322,18 @@ if __name__ == "__main__":
         num_workers=num_workers,
     )
 
-    input()
-
     print("Creating training DaskDataset and dataloader...", flush=True)
     train_dataset = mlf.DaskDataset(
-        AI_X=data["train"]["inputs"],
+        AI_X=data["train"]["inputs"][train_ldt_mask],
         AI_scaler=AI_scaler,
-        base_int=data["train"]["base_intensity"],
+        base_int=data["train"]["base_intensity"][train_ldt_mask],
         base_scaler=base_scaler,
         target_data=train_delta,
         target_scaler=target_scaler,
         device=calc_device,
-        cachedir="/scratch/mgomezd1/cache",  # os.path.join(datadir, 'cache'),
+        cachedir=cache_dir,
         zarr_name="train",
-        overwrite=False,
+        overwrite=args.overwrite_cache,
         num_workers=num_cores,
         track=train_positions,
         leadtimes=train_leadtimes,
@@ -273,13 +343,18 @@ if __name__ == "__main__":
         train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
     )
 
+    if emulate:
+        input("Press Enter to continue...")
     #  Model
     # We begin by instantiating our baseline model
     # CNN = baselines.TC_DeltaIntensity_CNN(deterministic=True).to(calc_device)
     # CNN = baselines.Regularized_Dilated_CNN(
     #     deterministic=True, dropout=0.05, dropout2d=0.05
     # ).to(calc_device)
-    CNN = baselines.SimpleCNN(deterministic=True).to(calc_device)
+    CNN = baselines.SimpleCNN(
+        deterministic=True if args.mode == "deterministic" else False,
+        num_scalars=train_dataset.num_scalars,
+    ).to(calc_device)
     # CNN = baselines.Regularized_NonDil_CNN(
     #     deterministic=True,
     #     dropout=0.05,
@@ -306,11 +381,11 @@ if __name__ == "__main__":
         train_loss = 0
         i = 0
         print("\nTraining:", flush=True)
-        for AI_X, base_int, target in train_loader:
+        for AI_X, scalars, target in train_loader:
             i += 1
             optimizer.zero_grad()
 
-            prediction = CNN(AI_X, base_int)
+            prediction = CNN(x=AI_X, scalars=scalars)
             batch_loss = loss_func(prediction, target)
 
             batch_loss.backward()
@@ -337,9 +412,9 @@ if __name__ == "__main__":
         val_loss = 0
         i = 0
         with torch.no_grad():
-            for AI_X, base_int, target in validation_loader:
+            for AI_X, scalars, target in validation_loader:
                 i += 1
-                prediction = CNN(AI_X, base_int)
+                prediction = CNN(x=AI_X, scalars=scalars)
                 batch_loss = loss_func(prediction, target)
 
                 val_loss += batch_loss.item()
@@ -392,12 +467,27 @@ if __name__ == "__main__":
 
     # plot the learning curves
     fig, ax = plt.subplots()
-    ax.plot(train_losses, label="Train Loss", color=np.array([27, 166, 166]), alpha=0.8)
     ax.plot(
-        val_losses, label="Validation Loss", color=np.array([191, 6, 92]), alpha=0.8
+        train_losses,
+        label="Train Loss",
+        color=np.array([27, 166, 166]) / 255,
+        alpha=0.8,
+    )
+    ax.plot(
+        val_losses,
+        label="Validation Loss",
+        color=np.array([191, 6, 92]) / 255,
+        alpha=0.8,
     )
     ax.set_xlabel("Epoch")
     ax.set_ylabel(f"Loss: {str(loss_func)}")
+    ax.legend()
+    toolbox.plot_facecolors(fig=fig, axes=ax)
+    fig.savefig(
+        os.path.join(
+            result_dir, f"CNN_{str(CNN)}_{args.ai_model}_losses_{start_time}.png"
+        )
+    )
 
     # %%
 

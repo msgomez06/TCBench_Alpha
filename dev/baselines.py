@@ -827,8 +827,7 @@ class SimpleCNN(nn.Module):
             self.size - self.kernel_size[0] + 2 * self.paddings[0]
         ) / self.strides[0] + 1
         self.pool = nn.MaxPool2d(kernel_size=self.pool_size, stride=self.pool_stride)
-        self.size = self.size // (self.pool_size * self.pool_stride)
-
+        self.size = (self.size - self.pool_size) // self.pool_stride + 1
         self.conv2 = nn.Conv2d(
             cnn_widths[0],
             cnn_widths[1],
@@ -840,7 +839,7 @@ class SimpleCNN(nn.Module):
             self.size - self.kernel_size[1] + 2 * self.paddings[1]
         ) / self.strides[1] + 1
         # pooling after each layer changes size
-        self.size = self.size // (self.pool_size * self.pool_stride)
+        self.size = (self.size - self.pool_size) // self.pool_stride + 1
 
         self.conv3 = nn.Conv2d(
             cnn_widths[1],
@@ -853,7 +852,7 @@ class SimpleCNN(nn.Module):
             self.size - self.kernel_size[2] + 2 * self.paddings[2]
         ) / self.strides[2] + 1
         # pooling after each layer changes size
-        self.size = self.size // (self.pool_size * self.pool_stride)
+        self.size = (self.size - self.pool_size) // self.pool_stride + 1
 
         # calculate the flat size
         self.flat_size = int(cnn_widths[2] * self.size * self.size)

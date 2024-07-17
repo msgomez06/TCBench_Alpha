@@ -273,18 +273,39 @@ class Data_Collection:
                     self.meta_dfs[group].loc[var].loc[str(year)] == 1
                 ), f"{year} is not available for {var}. Aborting data load operation."
 
-                file_list.append(
-                    os.path.join(
-                        self.data_path,
-                        group,
-                        var,
-                        f"{kwargs.get('prefix', 'ERA5')}_{year}_{var}.{kwargs.get('file_type', 'nc')}",
-                    )
+                # Make directory path
+                dir_path = os.path.join(
+                    self.data_path,
+                    group,
+                    var,
                 )
+
+                # Get the list of files in the directory
+                temp_list = os.listdir(dir_path)
+
+                # Filter the list of files to only include the year
+                for file in temp_list.copy():
+                    if f"_{year}" not in file:
+                        temp_list.remove(file)
+
+                # Expand the filepath to include the root directory
+                temp_list = [os.path.join(dir_path, file) for file in temp_list]
+
+                # Add the list of files to the file list
+                file_list.extend(temp_list)
+
+                # file_list.append(
+                #     os.path.join(
+                #         self.data_path,
+                #         group,
+                #         var,
+                #         f"{kwargs.get('prefix', 'ERA5')}_{year}-*_{var}.{kwargs.get('file_type', 'nc')}",
+                #     )
+                # )
                 if var not in data_var_dict.keys():
-                    data_var_dict[var] = list(xr.open_dataset(file_list[-1]).data_vars)[
-                        0
-                    ]
+                    data_var_dict[var] = list(
+                        xr.open_mfdataset(file_list[-1]).data_vars
+                    )[0]
 
         # Load the dataset
         ds = kwargs.get("data_loader", xr.open_mfdataset)(
@@ -760,8 +781,8 @@ def datetime_filter(datetimes, **kwargs):
 
 # %% Test running the data collection class
 if __name__ == "__main__":
-    # # Test running the data collection class
-    # dc = Data_Collection(default)
+    # Test running the data collection class
+    dc = Data_Collection(default)
 
     # # Test the variable availability function
     # dc.variable_availability(
@@ -776,7 +797,7 @@ if __name__ == "__main__":
     # datetimes = np.load(
     #     "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/timestamps_sample.npy"
     # )
-    tst = test.retrieve_ds(datetimes)
+    # tst = test.retrieve_ds(datetimes)
 
     # for i in range(tst.time.size // 4):
     #     fig = plt.figure()

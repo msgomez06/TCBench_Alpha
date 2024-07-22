@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 import torch
 import dask
 import multiprocessing
+import json
 
 # from dask import optimize
 import time
@@ -22,7 +23,7 @@ import time
 import joblib as jl
 
 from utils import toolbox, ML_functions as mlf
-import metrics
+import metrics, baselines
 
 # Importing the sklearn metrics
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error
@@ -30,19 +31,19 @@ import argparse
 
 if __name__ == "__main__":
     # emulate system arguments
-    emulate = False
+    emulate = True
     # Simulate command line arguments
     if emulate:
         sys.argv = [
             "script_name",  # Traditionally the script name, but it's arbitrary in Jupyter
             "--ai_model",
             "fourcastnetv2",
-            # "--overwrite_cache",
-            # "True",
-            # "--min_leadtime",
-            # "6",
-            # "--max_leadtime",
-            # "24",
+            "--overwrite_cache",
+            "False",
+            "--min_leadtime",
+            "6",
+            "--max_leadtime",
+            "24",
             "--use_gpu",
             "False",
         ]
@@ -103,7 +104,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--verbose",
         type=bool,
-        default=True,
+        default=False,
     )
 
     parser.add_argument(
@@ -122,6 +123,30 @@ if __name__ == "__main__":
         "--max_leadtime",
         type=int,
         default=168,
+    )
+
+    parser.add_argument(
+        "--cnn_width",
+        type=str,
+        default="[32,64,128]",
+    )
+
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.1,
+    )
+
+    parser.add_argument(
+        "--ablate_cols",
+        type=str,
+        default="[3,4]",
+    )
+
+    parser.add_argument(
+        "--fc_width",
+        type=int,
+        default=512,
     )
 
     args = parser.parse_args()
@@ -146,7 +171,7 @@ if __name__ == "__main__":
     num_cores = int(subprocess.check_output(["nproc"], text=True).strip())
 
     #  Data Loading
-    rng = np.random.default_rng(seed=42)
+    rng = np.random.default_rng(seed=2020)
 
     years = list(range(2013, 2020))
     rng.shuffle(years)
@@ -155,7 +180,7 @@ if __name__ == "__main__":
 
     sets, data = toolbox.get_ai_sets(
         {
-            "train": years[:-2],
+            "train": years[-4:-2],
             "validation": years[-2:],
             # "test": [2020],
         },
@@ -164,8 +189,8 @@ if __name__ == "__main__":
         base_position=True,
         ai_model=args.ai_model,
         use_cached=not args.overwrite_cache,
-        # verbose=True,
-        # debug=True,
+        verbose=args.verbose,
+        debug=args.debug,
     )
 
     # create a mask for the leadtimes
@@ -179,30 +204,24 @@ if __name__ == "__main__":
     )
     validation_ldt_mask = np.squeeze(validation_ldt_mask.compute())
 
-    # sets, data = toolbox.get_ai_sets(
-    #     {"train": [2014],"validation": [2015], }, # "test": [2020]},
-    #     datadir=datadir,
-    #     test_strategy="custom",
-    #     # use_cached=False,
-    #     # verbose=True,
-    #     # debug=True,
-    # )
-
-    #  Reload for interactive development
-    try:
-        import importlib
-
-        importlib.reload(baselines)
-        importlib.reload(metrics)
-        importlib.reload(mlf)
-    except:
-        import baselines
-
     #  Preprocessing
+
+    # Let's filter the data using leadtimes
+    print("Filtering data...", flush=True)
+    train_data = data["train"]["inputs"][train_ldt_mask]
+    valid_data = data["validation"]["inputs"][validation_ldt_mask]
+    # and the columns to ablate
+    ablate_cols = json.loads(args.ablate_cols)
+    train_data = train_data[
+        :,
+        [i for i in range(train_data.shape[1]) if i not in ablate_cols],
+        :,
+        :,
+    ]
+
     # We will want to normalize the inputs for the model
     # to work properly. We will use the AI_StandardScaler for this
     # purpose
-
     AI_scaler = None
     from_cache = not args.overwrite_cache
 
@@ -221,7 +240,7 @@ if __name__ == "__main__":
 
     if AI_scaler is None:
         print("Fitting AI datascaler...", flush=True)
-        AI_data = data["train"]["inputs"]
+        AI_data = data["train"]["inputs"][train_ldt_mask]
         # AI_data = optimize(AI_data)[0]
         AI_scaler = mlf.AI_StandardScaler()
         AI_scaler.fit(AI_data, num_workers=num_cores)
@@ -347,21 +366,15 @@ if __name__ == "__main__":
         input("Press Enter to continue...")
     #  Model
     # We begin by instantiating our baseline model
-    # CNN = baselines.TC_DeltaIntensity_CNN(deterministic=True).to(calc_device)
-    # CNN = baselines.Regularized_Dilated_CNN(
-    #     deterministic=True, dropout=0.05, dropout2d=0.05
-    # ).to(calc_device)
     CNN = baselines.RegularizedCNN(
         deterministic=True if args.mode == "deterministic" else False,
         num_scalars=train_dataset.num_scalars,
-        cnn_widths=[64, 128, 256],
+        input_cols=5 - len(args.ablate_cols),
+        cnn_widths=json.dumps(args.cnn_width),
+        fc_width=args.fc_width,
+        dropout=args.dropout,
+        dropout2d=args.dropout,
     ).to(calc_device)
-    # CNN = baselines.Regularized_NonDil_CNN(
-    #     deterministic=True,
-    #     dropout=0.05,
-    #     dropout2d=0.05,
-    #     num_scalars=train_dataset.num_scalars,
-    # ).to(calc_device)
 
     optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-4)  # , weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CyclicLR(
@@ -437,7 +450,8 @@ if __name__ == "__main__":
             torch.save(
                 CNN,
                 os.path.join(
-                    result_dir, f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}.pt"
+                    result_dir,
+                    f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}_{args.cnn_width}.pt",
                 ),
             )
 
@@ -462,33 +476,41 @@ if __name__ == "__main__":
         # Let's save the train and validation losses in a pickled dictionary
         losses = {"train": train_losses, "validation": val_losses}
         with open(
-            os.path.join(result_dir, f"CNN_{str(CNN)}_losses_{start_time}.pkl"), "wb"
+            os.path.join(
+                result_dir,
+                f"CNN_{str(CNN)}_losses_{start_time}_{args.ai_model}_{args.mode}_{args.cnn_width}.pkl",
+            ),
+            "wb",
         ) as f:
             pickle.dump(losses, f)
 
-    # plot the learning curves
-    fig, ax = plt.subplots()
-    ax.plot(
-        train_losses,
-        label="Train Loss",
-        color=np.array([27, 166, 166]) / 255,
-        alpha=0.8,
-    )
-    ax.plot(
-        val_losses,
-        label="Validation Loss",
-        color=np.array([191, 6, 92]) / 255,
-        alpha=0.8,
-    )
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel(f"Loss: {str(loss_func)}")
-    ax.legend()
-    toolbox.plot_facecolors(fig=fig, axes=ax)
-    fig.savefig(
-        os.path.join(
-            result_dir, f"CNN_{str(CNN)}_{args.ai_model}_losses_{start_time}.png"
+        # plot the learning curves
+        fig, ax = plt.subplots()
+        ax.plot(
+            train_losses,
+            label="Train Loss",
+            color=np.array([27, 166, 166]) / 255,
+            alpha=0.8,
         )
-    )
+        ax.plot(
+            val_losses,
+            label="Validation Loss",
+            color=np.array([191, 6, 92]) / 255,
+            alpha=0.8,
+        )
+        ax.set_xlabel("Epoch")
+        tick_space = len(train_losses) // 10
+        ax.xaxis.set_ticks(
+            np.arange(0, len(train_losses), tick_space if tick_space > 1 else 1)
+        )
+        ax.set_ylabel(f"Loss: {str(loss_func)}")
+        ax.legend()
+        toolbox.plot_facecolors(fig=fig, axes=ax)
+        fig.savefig(
+            os.path.join(
+                result_dir, f"CNN_{str(CNN)}_{args.ai_model}_losses_{start_time}.png"
+            )
+        )
 
     # %%
 

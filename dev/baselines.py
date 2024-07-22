@@ -812,12 +812,13 @@ class SimpleCNN(nn.Module):
         self.kernel_size = kwargs.get("kernel_size", [3, 3, 3])
         self.strides = kwargs.get("strides", [1, 1, 1])
         self.paddings = kwargs.get("paddings", [1, 1, 1])
+        input_cols = kwargs.get("input_cols", 5)
 
         # Output size = (input_size - kernel_size + 2*padding) / stride + 1
         # after pooling output size = output_size / (pool_size * pool_stride)
         self.size = 241
         self.conv1 = nn.Conv2d(
-            5,  # AI outputs only include 5 variables (u, v, mslp, t_850, z_500)
+            input_cols,  # For us, AI outputs contain up to 5 variables (u, v, mslp, t_850, z_500)
             cnn_widths[0],
             kernel_size=self.kernel_size[0],
             stride=self.strides[0],
@@ -878,6 +879,9 @@ class SimpleCNN(nn.Module):
 
 
 class RegularizedCNN(SimpleCNN):
+    def __str__(self):
+        return "Regularized_CNN"
+
     def __init__(self, num_scalars, fc_width=512, cnn_widths=[32, 64, 128], **kwargs):
         super().__init__(num_scalars, fc_width, cnn_widths, **kwargs)
         self.dropout2d = kwargs.get("dropout2d", 0.25)

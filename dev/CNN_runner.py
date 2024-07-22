@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 import torch
 import dask
 import multiprocessing
+import json
 
 # from dask import optimize
 import time
@@ -39,10 +40,10 @@ if __name__ == "__main__":
             "fourcastnetv2",
             # "--overwrite_cache",
             # "True",
-            # "--min_leadtime",
-            # "6",
-            # "--max_leadtime",
-            # "24",
+            "--min_leadtime",
+            "6",
+            "--max_leadtime",
+            "24",
             "--use_gpu",
             "False",
         ]
@@ -65,7 +66,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--result_dir",
         type=str,
-        default="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/",
+        default="/work/CTR/CI/DCSR/rfabbret/default/msirdey/FGSE/MiltonDelgadillo/CNN/dev/results/",
         help="Directory where the results are stored",
     )
 
@@ -124,6 +125,12 @@ if __name__ == "__main__":
         default=168,
     )
 
+    parser.add_argument(
+        "--cnn_width",
+        type=str,
+        default="[32,64,128]",
+    )
+
     args = parser.parse_args()
 
     print("Imports successful", flush=True)
@@ -163,7 +170,10 @@ if __name__ == "__main__":
         test_strategy="custom",
         base_position=True,
         ai_model=args.ai_model,
+        cache_dir=args.cache_dir,
         use_cached=not args.overwrite_cache,
+        verbose=args.verbose,
+        debug=args.debug,
         # verbose=True,
         # debug=True,
     )
@@ -351,9 +361,12 @@ if __name__ == "__main__":
     # CNN = baselines.Regularized_Dilated_CNN(
     #     deterministic=True, dropout=0.05, dropout2d=0.05
     # ).to(calc_device)
+    print("cnn width = ", args.cnn_width)
     CNN = baselines.SimpleCNN(
         deterministic=True if args.mode == "deterministic" else False,
         num_scalars=train_dataset.num_scalars,
+        cnn_width=json.dumps(args.cnn_width),
+        fc_width=512,
     ).to(calc_device)
     # CNN = baselines.Regularized_NonDil_CNN(
     #     deterministic=True,
@@ -436,7 +449,7 @@ if __name__ == "__main__":
             torch.save(
                 CNN,
                 os.path.join(
-                    result_dir, f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}.pt"
+                    result_dir, f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}_{args.cnn_width}.pt"
                 ),
             )
 
@@ -461,23 +474,15 @@ if __name__ == "__main__":
         # Let's save the train and validation losses in a pickled dictionary
         losses = {"train": train_losses, "validation": val_losses}
         with open(
-            os.path.join(result_dir, f"CNN_{str(CNN)}_losses_{start_time}.pkl"), "wb"
+                os.path.join(result_dir, f"CNN_{str(CNN)}_losses_{start_time}_{args.ai_model}_{args.mode}_{args.cnn_width}.pkl"), "wb"
         ) as f:
             pickle.dump(losses, f)
 
     # plot the learning curves
     fig, ax = plt.subplots()
+    ax.plot(train_losses, label="Train Loss", color=np.array([27, 166, 166])/255, alpha=0.8)
     ax.plot(
-        train_losses,
-        label="Train Loss",
-        color=np.array([27, 166, 166]) / 255,
-        alpha=0.8,
-    )
-    ax.plot(
-        val_losses,
-        label="Validation Loss",
-        color=np.array([191, 6, 92]) / 255,
-        alpha=0.8,
+        val_losses, label="Validation Loss", color=np.array([191, 6, 92])/255, alpha=0.8
     )
     ax.set_xlabel("Epoch")
     ax.set_ylabel(f"Loss: {str(loss_func)}")

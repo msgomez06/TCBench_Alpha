@@ -72,13 +72,17 @@ class DaskDataset(Dataset):
         # self.base_int = self.base_int.rechunk((self.chunk_size, 2))
 
         # Scale the data using the scaler using dask.delayed.ravel
-        interim = self.AI_X.rechunk((self.chunk_size, 5, 241, 241)).to_delayed().ravel()
+        interim = (
+            self.AI_X.rechunk((self.chunk_size, self.AI_X.shape[1], 241, 241))
+            .to_delayed()
+            .ravel()
+        )
         interim = [
             da.from_delayed(
                 self.AI_scaler.transform(block),
                 shape=(
                     min(self.chunk_size, self.AI_X.shape[0] - i * self.chunk_size),
-                    5,
+                    self.AI_X.shape[1],
                     241,
                     241,
                 ),
@@ -125,7 +129,9 @@ class DaskDataset(Dataset):
             # save AI_X to zarr
             AI_X_path = os.path.join(zarr_path, "AI_X")
             if not os.path.exists(AI_X_path):
-                self.AI_X.rechunk((self.chunk_size, 5, 241, 241)).to_zarr(AI_X_path)
+                self.AI_X.rechunk(
+                    (self.chunk_size, self.AI_X.shape[1], 241, 241)
+                ).to_zarr(AI_X_path)
                 # self.AI_X.to_zarr(AI_X_path)
             elif kwargs.get("overwrite", True):
                 # overwrite

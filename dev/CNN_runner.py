@@ -45,7 +45,9 @@ if __name__ == "__main__":
             "--max_leadtime",
             "24",
             "--use_gpu",
-            "False",
+            "True",
+            "--verbose",
+            "True",
         ]
 
     # Read in arguments with argparse
@@ -72,8 +74,7 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--use_gpu",
-        type=bool,
-        default=True,
+        action="store_true",
         help="Whether to use GPU for training",
     )
 
@@ -97,20 +98,20 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--overwrite_cache",
-        type=bool,
-        default=False,
+        help="Enable cache overwriting",
+        action="store_false",
     )
 
     parser.add_argument(
         "--verbose",
-        type=bool,
-        default=False,
+        help="Enable verbose mode",
+        action="store_false",
     )
 
     parser.add_argument(
         "--debug",
-        type=bool,
-        default=False,
+        help="Enable debug mode",
+        action="store_false",
     )
 
     parser.add_argument(
@@ -176,8 +177,11 @@ if __name__ == "__main__":
     years = list(range(2013, 2020))
     rng.shuffle(years)
 
-    print("Loading datasets...", flush=True)
+    # Make the cache directory if it doesn't exist
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
 
+    print("Loading datasets...", flush=True)
     sets, data = toolbox.get_ai_sets(
         {
             "train": years[-4:-2],
@@ -188,6 +192,7 @@ if __name__ == "__main__":
         test_strategy="custom",
         base_position=True,
         ai_model=args.ai_model,
+        cache_dir=cache_dir,
         use_cached=not args.overwrite_cache,
         verbose=args.verbose,
         debug=args.debug,
@@ -218,21 +223,21 @@ if __name__ == "__main__":
         :,
         :,
     ]
+    valid_data = valid_data[
+        :,
+        [i for i in range(valid_data.shape[1]) if i not in ablate_cols],
+        :,
+        :,
+    ]
 
     # We will want to normalize the inputs for the model
     # to work properly. We will use the AI_StandardScaler for this
     # purpose
     AI_scaler = None
     from_cache = not args.overwrite_cache
-
-    # Make the cache directory if it doesn't exist
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-
     fpath = os.path.join(cache_dir, "AI_scaler.pkl")
 
     if from_cache:
-        # print('Loading AI scaler from cache...', flush=True)
         if os.path.exists(fpath):
             print("Loading AI scaler from cache...", flush=True)
             with open(fpath, "rb") as f:
@@ -240,10 +245,9 @@ if __name__ == "__main__":
 
     if AI_scaler is None:
         print("Fitting AI datascaler...", flush=True)
-        AI_data = data["train"]["inputs"][train_ldt_mask]
         # AI_data = optimize(AI_data)[0]
         AI_scaler = mlf.AI_StandardScaler()
-        AI_scaler.fit(AI_data, num_workers=num_cores)
+        AI_scaler.fit(train_data, num_workers=num_cores)
 
         # save the scaler to the cache
         with open(fpath, "wb") as f:
@@ -318,7 +322,7 @@ if __name__ == "__main__":
     # is working as expected
     print("Creating validation DaskDataset and dataloader...", flush=True)
     validation_dataset = mlf.DaskDataset(
-        AI_X=data["validation"]["inputs"][validation_ldt_mask],
+        AI_X=valid_data,
         AI_scaler=AI_scaler,
         base_int=data["validation"]["base_intensity"][validation_ldt_mask],
         base_scaler=base_scaler,
@@ -343,7 +347,7 @@ if __name__ == "__main__":
 
     print("Creating training DaskDataset and dataloader...", flush=True)
     train_dataset = mlf.DaskDataset(
-        AI_X=data["train"]["inputs"][train_ldt_mask],
+        AI_X=train_data,
         AI_scaler=AI_scaler,
         base_int=data["train"]["base_intensity"][train_ldt_mask],
         base_scaler=base_scaler,
@@ -369,8 +373,8 @@ if __name__ == "__main__":
     CNN = baselines.RegularizedCNN(
         deterministic=True if args.mode == "deterministic" else False,
         num_scalars=train_dataset.num_scalars,
-        input_cols=5 - len(args.ablate_cols),
-        cnn_widths=json.dumps(args.cnn_width),
+        input_cols=5 - len(json.loads(args.ablate_cols)),
+        cnn_widths=json.loads(args.cnn_width),
         fc_width=args.fc_width,
         dropout=args.dropout,
         dropout2d=args.dropout,

@@ -99,19 +99,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--overwrite_cache",
         help="Enable cache overwriting",
-        action="store_false",
+        action="store_true",
     )
 
     parser.add_argument(
         "--verbose",
         help="Enable verbose mode",
-        action="store_false",
+        action="store_true",
     )
 
     parser.add_argument(
         "--debug",
         help="Enable debug mode",
-        action="store_false",
+        action="store_true",
     )
 
     parser.add_argument(

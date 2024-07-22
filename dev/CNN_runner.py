@@ -31,7 +31,7 @@ import argparse
 
 if __name__ == "__main__":
     # emulate system arguments
-    emulate = True
+    emulate = False
     # Simulate command line arguments
     if emulate:
         sys.argv = [
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     print("Loading datasets...", flush=True)
     sets, data = toolbox.get_ai_sets(
         {
-            "train": years[-4:-2],
+            "train": years[:-2],
             "validation": years[-2:],
             # "test": [2020],
         },

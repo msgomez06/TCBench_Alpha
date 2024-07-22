@@ -351,9 +351,10 @@ if __name__ == "__main__":
     # CNN = baselines.Regularized_Dilated_CNN(
     #     deterministic=True, dropout=0.05, dropout2d=0.05
     # ).to(calc_device)
-    CNN = baselines.SimpleCNN(
+    CNN = baselines.RegularizedCNN(
         deterministic=True if args.mode == "deterministic" else False,
         num_scalars=train_dataset.num_scalars,
+        cnn_widths=[64, 128, 256],
     ).to(calc_device)
     # CNN = baselines.Regularized_NonDil_CNN(
     #     deterministic=True,

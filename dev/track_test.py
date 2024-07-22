@@ -83,18 +83,18 @@ save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data
 dc = dlib.Data_Collection(data_dir)
 
 # %%
-track.process_data_collection(
-    dc,
-    reanal_variables=[
-        "10m_u_component_of_wind",
-        "10m_v_component_of_wind",
-        "mean_sea_level_pressure",
-        "temperature",
-        "geopotential",
-    ],
-    masktype="rect",
-    circum_points=30,
-)
+# track.process_data_collection(
+#     dc,
+#     reanal_variables=[
+#         "10m_u_component_of_wind",
+#         "10m_v_component_of_wind",
+#         "mean_sea_level_pressure",
+#         "temperature",
+#         "geopotential",
+#     ],
+#     masktype="rect",
+#     circum_points=30,
+# )
 
 # # %%
 # track.plot_track(

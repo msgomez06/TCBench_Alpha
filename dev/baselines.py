@@ -877,6 +877,25 @@ class SimpleCNN(nn.Module):
         return x
 
 
+class RegularizedCNN(SimpleCNN):
+    def __init__(self, num_scalars, fc_width=512, cnn_widths=[32, 64, 128], **kwargs):
+        super().__init__(num_scalars, fc_width, cnn_widths, **kwargs)
+        self.dropout2d = kwargs.get("dropout2d", 0.25)
+        self.dropout = kwargs.get("dropout", 0.25)
+
+    def forward(self, x, scalars):
+        x = F.dropout2d(self.pool(F.relu(self.conv1(x))), p=self.dropout2d)
+        x = F.dropout2d(self.pool(F.relu(self.conv2(x))), p=self.dropout2d)
+        x = F.dropout2d(self.pool(F.relu(self.conv3(x))), p=self.dropout2d)
+        x = x.view(-1, self.flat_size)
+        x = F.dropout(F.relu(self.fc1(x)), p=self.dropout)
+        scalars = torch.squeeze(F.dropout(F.relu(self.fc2(scalars)), p=self.dropout))
+        # Concatenate the base intensity with the output of the dense layer
+        x = torch.cat([x, scalars], dim=1)
+        x = self.fc3(x)
+        return x
+
+
 # %%
 
 # %%

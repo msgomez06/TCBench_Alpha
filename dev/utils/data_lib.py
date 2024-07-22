@@ -213,10 +213,22 @@ class Data_Collection:
 
             plt.show()
 
-    def retrieve_ds(self, vars: list, years: list, **kwargs):
+    def retrieve_ds(self, vars, dates, **kwargs):
+        # concatenating the datasets makes the resulting dataset blank
+        # for some reason. Need to return a list of datasets instead
         assert hasattr(
             self, "meta_dfs"
         ), "The data collection object has not been properly initialized."
+
+        # check that the years are an int or a list
+        assert isinstance(dates, np.datetime64) or isinstance(
+            dates, np.ndarray
+        ), "provided dates must be a numpy datetime64 or an array of datetimes"
+
+        if not isinstance(dates, np.ndarray):
+            assert (
+                dates.dtype == np.datetime64
+            ), "dates must have a numpy datetime64 dtype"
 
         # check that the vars are a list or a string
         assert isinstance(vars, list) or isinstance(
@@ -227,18 +239,18 @@ class Data_Collection:
         if not isinstance(vars, list):
             vars = [vars]
 
-        # check that the years are an int or a list
-        assert isinstance(years, int) or isinstance(
-            years, list
-        ), "years must be an int or a list"
+        # transform the dates into a pandas datetime
+        dates = pd.to_datetime(dates)
 
-        # check if the years are a list, else make it a list
-        if not isinstance(years, list):
-            years = [years]
+        # filter out datetimes that are not used by TC tracks
+        dates = dates[np.isin(dates.hour, np.arange(0, 24, 6))]
+        unique_years = dates.strftime("%Y").unique().astype(int)
+        unique_months = np.concatenate(
+            [dates.strftime("%Y-%m").unique(), dates.strftime("%Y-%-m").unique()]
+        )
 
         # Initialize list of files for multi-file dataset
         file_list = []
-
         data_var_dict = {}
         # Check that the variables are available
         for var in vars:
@@ -262,8 +274,8 @@ class Data_Collection:
                 group is not None
             ), f"{var} is not available in any of the groups. Aborting data load operation."
 
-            # and check that the years are available
-            for year in years:
+            # Make the list of files to load
+            for year in unique_years:
                 # Assert that the year is an integer
                 assert isinstance(
                     year, int
@@ -282,10 +294,14 @@ class Data_Collection:
 
                 # Get the list of files in the directory
                 temp_list = os.listdir(dir_path)
+                valid_months = unique_months
+                bool_idx = [str(year) in combination for combination in unique_months]
+                valid_months = valid_months[bool_idx]
 
                 # Filter the list of files to only include the year
                 for file in temp_list.copy():
-                    if f"_{year}" not in file:
+                    # check if any of the valid months are in the file name
+                    if not any([month in file for month in valid_months]):
                         temp_list.remove(file)
 
                 # Expand the filepath to include the root directory
@@ -314,6 +330,107 @@ class Data_Collection:
         )
 
         return ds, data_var_dict
+
+    # def retrieve_ds(self, vars: list, years: list, **kwargs):
+    #     assert hasattr(
+    #         self, "meta_dfs"
+    #     ), "The data collection object has not been properly initialized."
+
+    #     # check that the vars are a list or a string
+    #     assert isinstance(vars, list) or isinstance(
+    #         vars, str
+    #     ), "vars must be a list or a string"
+
+    #     # check if the variables are a list, else make it a list
+    #     if not isinstance(vars, list):
+    #         vars = [vars]
+
+    #     # check that the years are an int or a list
+    #     assert isinstance(years, int) or isinstance(
+    #         years, list
+    #     ), "years must be an int or a list"
+
+    #     # check if the years are a list, else make it a list
+    #     if not isinstance(years, list):
+    #         years = [years]
+
+    #     # Initialize list of files for multi-file dataset
+    #     file_list = []
+    #     data_var_dict = {}
+    #     # Check that the variables are available
+    #     for var in vars:
+    #         # Assert that the variable is a string
+    #         assert isinstance(
+    #             var, str
+    #         ), f"Variable {var} is not a string. Aborting data load operation."
+
+    #         # Check that the variable is available in one of the groups. If not available
+    #         # or available in more than one group, abort the data load operation
+    #         group = None
+    #         for key in self.meta_dfs.keys():
+    #             if var in self.meta_dfs[key].index:
+    #                 if group is None:
+    #                     group = key
+    #                 else:
+    #                     raise ValueError(
+    #                         f"{var} is available in more than one group. Aborting data load operation."
+    #                     )
+    #         assert (
+    #             group is not None
+    #         ), f"{var} is not available in any of the groups. Aborting data load operation."
+
+    #         # and check that the years are available
+    #         for year in years:
+    #             # Assert that the year is an integer
+    #             assert isinstance(
+    #                 year, int
+    #             ), f"Year {year} is not an integer. Aborting data load operation."
+
+    #             assert (
+    #                 self.meta_dfs[group].loc[var].loc[str(year)] == 1
+    #             ), f"{year} is not available for {var}. Aborting data load operation."
+
+    #             # Make directory path
+    #             dir_path = os.path.join(
+    #                 self.data_path,
+    #                 group,
+    #                 var,
+    #             )
+
+    #             # Get the list of files in the directory
+    #             temp_list = os.listdir(dir_path)
+
+    #             # Filter the list of files to only include the year
+    #             for file in temp_list.copy():
+    #                 if f"_{year}" not in file:
+    #                     temp_list.remove(file)
+
+    #             # Expand the filepath to include the root directory
+    #             temp_list = [os.path.join(dir_path, file) for file in temp_list]
+
+    #             # Add the list of files to the file list
+    #             file_list.extend(temp_list)
+
+    #             # file_list.append(
+    #             #     os.path.join(
+    #             #         self.data_path,
+    #             #         group,
+    #             #         var,
+    #             #         f"{kwargs.get('prefix', 'ERA5')}_{year}-*_{var}.{kwargs.get('file_type', 'nc')}",
+    #             #     )
+    #             # )
+    #             if var not in data_var_dict.keys():
+    #                 data_var_dict[var] = list(
+    #                     xr.open_mfdataset(file_list[-1]).data_vars
+    #                 )[0]
+
+    #     # Load the dataset
+    #     ds = kwargs.get("data_loader", xr.open_mfdataset)(
+    #         file_list,
+    #         **kwargs.get("data_loader_kwargs", {"parallel": True}),
+    #     )
+
+    #     return ds, data_var_dict
 
     # TODO: Figure out why this explodes memory usage and fix it
     @profile

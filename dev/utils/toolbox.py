@@ -904,7 +904,8 @@ def get_ai_sets(splits: dict, **kwargs):
 
                                 return result
 
-                    temp_data = jl.Parallel(n_jobs=jl.cpu_count())(
+                    n_jobs = kwargs.get("n_jobs", jl.cpu_count())
+                    temp_data = jl.Parallel(n_jobs=n_jobs)(
                         jl.delayed(processor)(storm, **kwargs) for storm in storms
                     )
                     if progress:
@@ -1464,169 +1465,317 @@ class tc_track:
                             len(var_meta[year]) == var_meta[year].sum()
                         ), f"Missing variable data for {year}"
 
-                    for var in var_list:
-                        ##TODO: check if file exsits and if it does, check if the variable is already in the file
-                        # if it is, skip it
+                    var_data, _ = data_collection.retrieve_ds(
+                        vars=[*var_list], dates=self.timestamps
+                    )
 
-                        print("Years", years, "Variable", var)
-                        # Load the data for each variable
-                        var_data, _ = data_collection.retrieve_ds(
-                            vars=var, years=years, **kwargs
+                    # get coordinate names
+                    (
+                        lat_coord,
+                        lon_coord,
+                        time_coord,
+                        level_coord,
+                        _,
+                    ) = get_coord_vars(var_data)
+
+                    valid_steps = sanitize_timestamps(self.timestamps, var_data)
+                    valid_steps = pd.to_datetime(valid_steps)
+                    # Filter to only include 00, 06, 12, 18 time steps
+                    valid_steps = valid_steps[
+                        valid_steps.hour.isin([0, 6, 12, 18])
+                    ].values
+
+                    print(f"Processing time steps in parallel...")
+                    # Loop through each time step in parallel
+                    n_jobs = kwargs.get("n_jobs", jl.cpu_count())
+                    jl.Parallel(n_jobs=n_jobs // 4, verbose=2)(
+                        jl.delayed(self.process_timestep)(
+                            var_data.sel(time=t).copy(),
+                            **{
+                                "lat_coord": lat_coord,
+                                "lon_coord": lon_coord,
+                                "time_coord": time_coord,
+                                "level_coord": level_coord,
+                            },
+                            timestamp=t,
+                            **kwargs,
                         )
+                        for t in valid_steps
+                    )
 
-                        # get coordinate names
-                        (
-                            lat_coord,
-                            lon_coord,
-                            time_coord,
-                            level_coord,
-                            _,
-                        ) = get_coord_vars(var_data)
+                    # Garbage collect to free up memory
+                    gc.collect()
 
-                        print(f"Adding {var} to {self.uid}...")
+                    # Read in the temporary files and merge them into the final file
+                    file_list = os.listdir(os.path.join(self.filepath, "temp"))
 
-                        # Sanitize timestamps because ibtracs includes unsual time steps
-                        valid_steps = sanitize_timestamps(self.timestamps, var_data)
+                    datavars = [*var_data.data_vars]
 
-                        print(f"Processing time steps in parallel...")
-                        # Loop through each time step in parallel
-                        jl.Parallel(n_jobs=-1, verbose=2)(
-                            jl.delayed(self.process_timestep)(
-                                var_data.sel(time=t).copy(),
-                                **{
-                                    "lat_coord": lat_coord,
-                                    "lon_coord": lon_coord,
-                                    "time_coord": time_coord,
-                                    "level_coord": level_coord,
-                                },
-                                timestamp=t,
-                                **kwargs,
+                    # Filter out files that do not include the temp preix, variable names, and UID
+                    for file in file_list.copy():
+
+                        # remove if the file doesn't include any of the data variables
+                        checker_list = []
+                        for datavar in datavars:
+                            checker = f".{datavar}."
+                            if checker not in file:
+                                checker_list.append(False)
+                            else:
+                                checker_list.append(True)
+
+                        if not any(checker_list):
+                            file_list.remove(file)
+                            print(
+                                f"Removing {file} from file list because it doesn't include {datavars}"
                             )
-                            for t in valid_steps
+                        elif "temp" not in file:
+                            file_list.remove(file)
+                            print(
+                                f"Removing {file} from file list because it doesn't include temp"
+                            )
+                        elif self.uid not in file:
+                            file_list.remove(file)
+                            print(
+                                f"Removing {file} from file list because it doesn't include {self.uid}"
+                            )
+
+                    # If temporary files are present, merge them into the final file
+                    if len(file_list) > 0:
+                        # Load the temporary files into an xarray dataset
+                        temp_ds = xr.open_mfdataset(
+                            [
+                                os.path.join(self.filepath, "temp", file)
+                                for file in file_list
+                            ],
+                            concat_dim=time_coord,
+                            combine="nested",
+                            parallel=True,
                         )
+
+                        # Select the non-null data from the temporary dataset
+                        temp_ds = temp_ds.where(
+                            temp_ds.notnull().compute(), drop=True
+                        )  # testing: deleted .compute() from notnull
+
+                        # calculate the encoding for the final dataset
+                        encoding = {}
+                        for data_var in temp_ds.data_vars:
+                            encoding[data_var] = {
+                                "original_shape": temp_ds[data_var].shape,
+                                "_FillValue": temp_ds[data_var].encoding.get(
+                                    "_FillValue", -32767
+                                ),
+                                "dtype": kwargs.get("dtype", np.int16),
+                                "add_offset": temp_ds[data_var].mean().compute().values,
+                                "scale_factor": temp_ds[data_var].std().compute().values
+                                / kwargs.get("scale_divisor", 2000),
+                            }
+
+                        # if the UID dataset exists, merge the new data into it
+                        if os.path.exists(self.ReAnal.filepath):
+                            print(f"Merging into {self.uid}...")
+                            # Load the UID dataset
+                            final_ds = xr.open_dataset(self.ReAnal.filepath)
+
+                            # Merge the new data into the final dataset
+                            final_ds = xr.merge([final_ds, temp_ds], compat="override")
+
+                            # Save the final dataset to disk
+                            final_ds.to_netcdf(
+                                self.ReAnal.filepath[:-3] + ".appended.nc",
+                                mode="w",
+                                compute=True,
+                                encoding=encoding,
+                            )
+
+                            # Replace the old file
+                            os.replace(
+                                self.ReAnal.filepath[:-3] + ".appended.nc",
+                                self.ReAnal.filepath,
+                            )
+
+                        else:
+                            # Save the final dataset to disk
+                            temp_ds.to_netcdf(
+                                self.ReAnal.filepath,
+                                mode="w",
+                                compute=True,
+                                encoding=encoding,
+                            )
+
+                        # Close the temporary dataset
+                        temp_ds.close()
+                        del temp_ds
+
+                        # delete the temporary files
+                        for file in file_list:
+                            os.remove(os.path.join(self.filepath, "temp", file))
 
                         # Garbage collect to free up memory
                         gc.collect()
 
-                        # Read in the temporary files and merge them into the final file
-                        file_list = os.listdir(os.path.join(self.filepath, "temp"))
+                    # for var in var_list:
+                    #     ##TODO: check if file exsits and if it does, check if the variable is already in the file
+                    #     # if it is, skip it
 
-                        datavar = list(var_data.data_vars)[0]
+                    #     print("Years", years, "Variable", var)
+                    #     # Load the data for each variable
+                    #     var_data, _ = data_collection.retrieve_ds(
+                    #         vars=var, years=years, **kwargs
+                    #     )
 
-                        # Filter out files that do not include the temp preix, variable name, and UID
-                        for file in file_list.copy():
-                            if "." + datavar + "." not in file:
-                                file_list.remove(file)
-                                print(
-                                    f"Removing {file} from file list because it doesn't include {datavar}"
-                                )
-                            elif "temp" not in file:
-                                file_list.remove(file)
-                                print(
-                                    f"Removing {file} from file list because it doesn't include temp"
-                                )
-                            elif self.uid not in file:
-                                file_list.remove(file)
-                                print(
-                                    f"Removing {file} from file list because it doesn't include {self.uid}"
-                                )
+                    #     # get coordinate names
+                    #     (
+                    #         lat_coord,
+                    #         lon_coord,
+                    #         time_coord,
+                    #         level_coord,
+                    #         _,
+                    #     ) = get_coord_vars(var_data)
 
-                        print("after removal: ", file_list)
+                    #     print(f"Adding {var} to {self.uid}...")
 
-                        # If temporary files are present, merge them into the final file
-                        if len(file_list) > 0:
-                            # Load the temporary files into an xarray dataset
-                            temp_ds = xr.open_mfdataset(
-                                [
-                                    os.path.join(self.filepath, "temp", file)
-                                    for file in file_list
-                                ],
-                                concat_dim=time_coord,
-                                combine="nested",
-                                parallel=True,
-                            )
+                    #     # Sanitize timestamps because ibtracs includes unsual time steps
+                    #     valid_steps = sanitize_timestamps(self.timestamps, var_data)
 
-                            # Select the non-null data from the temporary dataset
-                            temp_ds = temp_ds.where(
-                                ~temp_ds.isnull().compute(), drop=True
-                            )
+                    #     print(f"Processing time steps in parallel...")
+                    #     # Loop through each time step in parallel
+                    #     n_jobs = kwargs.get("n_jobs", jl.cpu_count())
+                    #     jl.Parallel(n_jobs=n_jobs, verbose=2)(
+                    #         jl.delayed(self.process_timestep)(
+                    #             var_data.sel(time=t).copy(),
+                    #             **{
+                    #                 "lat_coord": lat_coord,
+                    #                 "lon_coord": lon_coord,
+                    #                 "time_coord": time_coord,
+                    #                 "level_coord": level_coord,
+                    #             },
+                    #             timestamp=t,
+                    #             **kwargs,
+                    #         )
+                    #         for t in valid_steps
+                    #     )
 
-                            # calculate the encoding for the final dataset
-                            encoding = {}
-                            for data_var in temp_ds.data_vars:
-                                encoding[data_var] = {
-                                    "original_shape": temp_ds[data_var].shape,
-                                    "_FillValue": temp_ds[data_var].encoding.get(
-                                        "_FillValue", -32767
-                                    ),
-                                    "dtype": kwargs.get("dtype", np.int16),
-                                    "add_offset": temp_ds[data_var]
-                                    .mean()
-                                    .compute()
-                                    .values,
-                                    "scale_factor": temp_ds[data_var]
-                                    .std()
-                                    .compute()
-                                    .values
-                                    / kwargs.get("scale_divisor", 2000),
-                                }
+                    #     # Garbage collect to free up memory
+                    #     gc.collect()
 
-                            # TODO 2024-07-18: Fix path handling
+                    #     # Read in the temporary files and merge them into the final file
+                    #     file_list = os.listdir(os.path.join(self.filepath, "temp"))
 
-                            # if the UID dataset exists, merge the new data into it
-                            if os.path.exists(
-                                self.filepath
-                                + f"{self.uid}.{kwargs.get('masktype', 'rect')}.nc"
-                            ):
-                                print(f"Merging {var} into {self.uid}...")
-                                # Load the UID dataset
-                                final_ds = xr.open_dataset(
-                                    self.filepath
-                                    + f"{self.uid}.{kwargs.get('masktype', 'rect')}.nc"
-                                )
+                    #     datavar = list(var_data.data_vars)[0]
 
-                                # Merge the new data into the final dataset
-                                final_ds = xr.merge([final_ds, temp_ds])
+                    #     # Filter out files that do not include the temp preix, variable name, and UID
+                    #     for file in file_list.copy():
+                    #         if "." + datavar + "." not in file:
+                    #             file_list.remove(file)
+                    #             print(
+                    #                 f"Removing {file} from file list because it doesn't include {datavar}"
+                    #             )
+                    #         elif "temp" not in file:
+                    #             file_list.remove(file)
+                    #             print(
+                    #                 f"Removing {file} from file list because it doesn't include temp"
+                    #             )
+                    #         elif self.uid not in file:
+                    #             file_list.remove(file)
+                    #             print(
+                    #                 f"Removing {file} from file list because it doesn't include {self.uid}"
+                    #             )
 
-                                # Save the final dataset to disk
-                                final_ds.to_netcdf(
-                                    self.filepath
-                                    + f"{self.uid}.{kwargs.get('masktype', 'rect')}.appended.nc",
-                                    mode="w",
-                                    compute=True,
-                                    encoding=encoding,
-                                )
+                    #     print("after removal: ", file_list)
 
-                                # Workaround to rewrite file with appended file
-                                # Overwrite the original file with the appended file
-                                subprocess.run(
-                                    [
-                                        "mv",
-                                        "-f",
-                                        f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rect')}.appended.nc",
-                                        f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rect')}.nc",
-                                    ]
-                                )
-                            else:
-                                # Save the final dataset to disk
-                                temp_ds.to_netcdf(
-                                    self.filepath
-                                    + f"{self.uid}.{kwargs.get('masktype', 'rect')}.nc",
-                                    mode="w",
-                                    compute=True,
-                                    encoding=encoding,
-                                )
+                    #     # If temporary files are present, merge them into the final file
+                    #     if len(file_list) > 0:
+                    #         # Load the temporary files into an xarray dataset
+                    #         temp_ds = xr.open_mfdataset(
+                    #             [
+                    #                 os.path.join(self.filepath, "temp", file)
+                    #                 for file in file_list
+                    #             ],
+                    #             concat_dim=time_coord,
+                    #             combine="nested",
+                    #             parallel=True,
+                    #         )
 
-                            # Close the temporary dataset
-                            temp_ds.close()
-                            del temp_ds
+                    #         # Select the non-null data from the temporary dataset
+                    #         temp_ds = temp_ds.where(
+                    #             temp_ds.notnull().compute(), drop=True
+                    #         )
 
-                            # delete the temporary files
-                            for file in file_list:
-                                os.remove(self.filepath + file)
+                    #         # calculate the encoding for the final dataset
+                    #         encoding = {}
+                    #         for data_var in temp_ds.data_vars:
+                    #             encoding[data_var] = {
+                    #                 "original_shape": temp_ds[data_var].shape,
+                    #                 "_FillValue": temp_ds[data_var].encoding.get(
+                    #                     "_FillValue", -32767
+                    #                 ),
+                    #                 "dtype": kwargs.get("dtype", np.int16),
+                    #                 "add_offset": temp_ds[data_var]
+                    #                 .mean()
+                    #                 .compute()
+                    #                 .values,
+                    #                 "scale_factor": temp_ds[data_var]
+                    #                 .std()
+                    #                 .compute()
+                    #                 .values
+                    #                 / kwargs.get("scale_divisor", 2000),
+                    #             }
 
-                            # Garbage collect to free up memory
-                            gc.collect()
+                    #         # TODO 2024-07-18: Fix path handling
+
+                    #         # if the UID dataset exists, merge the new data into it
+                    #         if os.path.exists(self.ReAnal.filepath):
+                    #             print(f"Merging {var} into {self.uid}...")
+                    #             # Load the UID dataset
+                    #             final_ds = xr.open_dataset(self.ReAnal.filepath)
+
+                    #             # Merge the new data into the final dataset
+                    #             final_ds = xr.merge([final_ds, temp_ds])
+
+                    #             # Save the final dataset to disk
+                    #             final_ds.to_netcdf(
+                    #                 self.ReAnal.filepath[:-3] + ".appended.nc",
+                    #                 mode="w",
+                    #                 compute=True,
+                    #                 encoding=encoding,
+                    #             )
+
+                    #             # Replace the old file
+                    #             os.replace(
+                    #                 self.ReAnal.filepath[:-3] + ".appended.nc",
+                    #                 self.ReAnal.filepath,
+                    #             )
+
+                    #             # # Workaround to rewrite file with appended file
+                    #             # # Overwrite the original file with the appended file
+                    #             # subprocess.run(
+                    #             #     [
+                    #             #         "mv",
+                    #             #         "-f",
+                    #             #         f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rect')}.appended.nc",
+                    #             #         f"{self.filepath}{self.uid}.{kwargs.get('masktype', 'rect')}.nc",
+                    #             #     ]
+                    #             # )
+                    #         else:
+                    #             # Save the final dataset to disk
+                    #             temp_ds.to_netcdf(
+                    #                 self.ReAnal.filepath,
+                    #                 mode="w",
+                    #                 compute=True,
+                    #                 encoding=encoding,
+                    #             )
+
+                    #         # Close the temporary dataset
+                    #         temp_ds.close()
+                    #         del temp_ds
+
+                    #         # delete the temporary files
+                    #         for file in file_list:
+                    #             os.remove(os.path.join(self.filepath, "temp", file))
+
+                    #         # Garbage collect to free up memory
+                    #         gc.collect()
             elif str(data_collection) == "TCBench_AI_DataCollection":
                 # Check if the target dataset exists. If it does, and the
                 # overwrite argument isn't in the kwargs, skip the processing
@@ -1870,25 +2019,27 @@ class tc_track:
 
         var_list = None
 
-        # Check if the dataset doesn't exist in the object
-        if not hasattr(self.ReAnal, "ds"):
-            # Check if the dataset exists on disk
-            self.ReAnal.load()
+        # # Check if the dataset doesn't exist in the object
+        # if not hasattr(self.ReAnal, "ds"):
+        #     # Check if the dataset exists on disk
+        #     self.ReAnal.load()
 
-        # Check if the dataset exists in the object after checking disk
-        if hasattr(self.ReAnal, f"ds"):
-            # Check if the data variables are already in the dataset
-            for var in data.data_vars:
-                if var in self.ReAnal.ds.data_vars:
-                    print(f"Variable {var} already in dataset. Skipping...")
-                else:
-                    # print(f"Adding variable {var} to processing list...")
-                    if not var_list:
-                        var_list = [var]
-                    else:
-                        var_list.append(var)
-        elif var_list is None:  # add all the datavars to the list
-            var_list = list(data.data_vars)
+        # # Check if the dataset exists in the object after checking disk
+        # if hasattr(self.ReAnal, f"ds"):
+        #     # Check if the data variables are already in the dataset
+        #     for var in data.data_vars:
+        #         if var in self.ReAnal.ds.data_vars:
+        #             print(f"Variable {var} already in dataset. Skipping...")
+        #         else:
+        #             # print(f"Adding variable {var} to processing list...")
+        #             if not var_list:
+        #                 var_list = [var]
+        #             else:
+        #                 var_list.append(var)
+        # elif var_list is None:  # add all the datavars to the list
+        #     var_list = list(data.data_vars)
+
+        var_list = list(data.data_vars)
 
         if var_list is not None:
             data = data[var_list]
@@ -1929,8 +2080,10 @@ class tc_track:
                 os.makedirs(temp_dir)
 
             data.to_netcdf(
-                temp_dir
-                + f"temp_{np.where(self.timestamps == timestamp)[0][0]}.{data_var}.{self.uid}.{ds_type}.nc",
+                os.path.join(
+                    temp_dir,
+                    f"temp_{np.where(self.timestamps == timestamp)[0][0]}.{data_var}.{self.uid}.{ds_type}.nc",
+                ),
                 mode="w",
                 compute=True,
                 encoding=encoding,
@@ -1938,7 +2091,8 @@ class tc_track:
 
             data.close()
             del data
-            delattr(self.ReAnal, "ds")
+            if hasattr(self.ReAnal, f"ds"):
+                delattr(self.ReAnal, "ds")
             gc.collect()
 
     def load_data(self, **kwargs):

@@ -7,6 +7,7 @@ import matplotlib as mpl
 import numpy as np
 import dask.array as da
 import gc
+import h5py
 
 # Backend Libraries
 import joblib as jl
@@ -14,12 +15,38 @@ import joblib as jl
 from utils import toolbox, constants
 from utils import data_lib as dlib
 
-# %% Load the seasons to process
+import argparse
 
+# %% Load the seasons to process
+emulate = False
+if emulate:
+    sys.argv = [
+        "reanal_track_processor.py",
+        "--season",
+        "2016",
+    ]
+
+
+# Read in the arguments
+parser = argparse.ArgumentParser(description="Process the reanalysis data for the TCs")
+parser.add_argument(
+    "--season",
+    type=int,
+    help="The seasons to process",
+    default=2013,
+)
+
+args = parser.parse_args()
+
+# %%
 seasons = toolbox.get_TC_seasons(
-    season_list=[*range(2016, 2021)],
+    season_list=[args.season],
     datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
 )
+# seasons = toolbox.get_TC_seasons(
+#     season_list=[*range(2018, 2019)],
+#     datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+# )
 
 # %% Control flags
 process = True
@@ -39,8 +66,25 @@ for season, storms in seasons.items():
         # n_jobs = jl.cpu_count()
         n_jobs = 8
 
+        # for storm in storms:
+        #     storm.process_data_collection(
+        #         dc,
+        #         reanal_variables=[
+        #             "10m_u_component_of_wind",
+        #             "10m_v_component_of_wind",
+        #             "mean_sea_level_pressure",
+        #             "temperature",
+        #             "geopotential",
+        #         ],
+        #         masktype="rect",
+        #         circum_points=30 * 4,
+        #         plevels={"temperature": [850], "geopotential": [500]},
+        #         verbose=True,
+        #         n_jobs=4,
+        #     )
+
         # process the tracks
-        jl.Parallel(n_jobs=n_jobs)(
+        jl.Parallel(n_jobs=n_jobs, backend="threading")(
             jl.delayed(storm.process_data_collection)(
                 dc,
                 reanal_variables=[
@@ -50,9 +94,11 @@ for season, storms in seasons.items():
                     "temperature",
                     "geopotential",
                 ],
+                plevels={"temperature": [850], "geopotential": [500]},
                 masktype="rect",
                 circum_points=30,
                 n_jobs=n_jobs,
+                verbose=False,
             )
             for storm in storms
         )

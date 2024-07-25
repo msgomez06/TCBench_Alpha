@@ -22,7 +22,10 @@ import metpy.units as mpunits
 import joblib as jl
 from memory_profiler import profile
 from pint import Quantity
+import dask
 import dask.array as da
+from dask.distributed import Client
+from dask.diagnostics import ProgressBar
 import gc
 
 # TCBench Libraries
@@ -244,6 +247,7 @@ class Data_Collection:
 
         # filter out datetimes that are not used by TC tracks
         dates = dates[np.isin(dates.hour, np.arange(0, 24, 6))]
+        dates = dates.unique()
         unique_years = dates.strftime("%Y").unique().astype(int)
         unique_months = np.concatenate(
             [dates.strftime("%Y-%m").unique(), dates.strftime("%Y-%-m").unique()]
@@ -310,24 +314,105 @@ class Data_Collection:
                 # Add the list of files to the file list
                 file_list.extend(temp_list)
 
-                # file_list.append(
-                #     os.path.join(
-                #         self.data_path,
-                #         group,
-                #         var,
-                #         f"{kwargs.get('prefix', 'ERA5')}_{year}-*_{var}.{kwargs.get('file_type', 'nc')}",
-                #     )
-                # )
                 if var not in data_var_dict.keys():
                     data_var_dict[var] = list(
                         xr.open_mfdataset(file_list[-1]).data_vars
                     )[0]
 
         # Load the dataset
-        ds = kwargs.get("data_loader", xr.open_mfdataset)(
+        temp_ds = kwargs.get("data_loader", xr.open_mfdataset)(
             file_list,
-            **kwargs.get("data_loader_kwargs", {"parallel": True}),
+            **kwargs.get(
+                "data_loader_kwargs", {"parallel": True, "combine": "by_coords"}
+            ),
         )
+        if kwargs.get("verbose", False):
+            print("Chunking the dataset...")
+
+        # chunks = kwargs.get("chunks", {"time": 1, "latitude": -1, "longitude": -1})
+        # if hasattr(temp_ds, "level"):
+        #     chunks.update({"level": 2})
+
+        # Set up Dask client with memory limit per worker and set number of workers
+        # client = Client(
+        #     memory_limit=kwargs.get("mem_limit", "40GB"),
+        #     n_workers=kwargs.get("n_workers", 1),
+        # )
+
+        # temp_ds = temp_ds.sel(time=dates).chunk()
+
+        # with dask.config.set(**{"array.slicing.split_large_chunks": True}):
+        #     with ProgressBar():
+        #         # compute the dataset with the client
+        #         temp_ds = temp_ds.compute(scheduler="threads")
+
+        # filter the pressure levels if they are requested and present
+        if hasattr(temp_ds, "level"):
+            filtered_vars = []
+            plevel_dict = kwargs.get("plevels", {})
+
+            # reverse the data_var_dict
+            dvar_lookup = {v: k for k, v in data_var_dict.items()}
+
+            assert all(
+                [var in dvar_lookup.keys() for var in list(temp_ds.data_vars)]
+            ), "One or more variables requested are not present in the dataset."
+
+            vars_to_filter = [dvar_lookup[var] for var in list(temp_ds.data_vars)]
+
+            for var in vars_to_filter:
+                for level in plevel_dict[var]:
+                    print(f"Filtering {var} at {level} hPa", flush=True)
+                    temp_var = temp_ds[data_var_dict[var]]
+                    temp_var = temp_var.sel(level=level)
+                    temp_var = temp_var.rename(f"{data_var_dict[var]}.{level}").chunk(
+                        {"time": 1, "latitude": -1, "longitude": -1}
+                    )
+                    print("Computing level...", flush=True)
+                    if kwargs.get("verbose", False):
+                        with ProgressBar():
+                            temp_var = temp_var.compute()
+                    else:
+                        temp_var = temp_var.compute()
+                    # drop the level coordinate
+                    temp_var = temp_var.drop("level")
+                    # change time from scalar back to coordinate
+
+                    print("level computed...", flush=True)
+
+                    steps = []
+                    for date in dates:
+                        step_var = temp_var.sel(time=date)
+                        step_var = step_var.chunk()
+                        if kwargs.get("verbose", False):
+                            with ProgressBar():
+                                step_var = step_var.compute()
+                        else:
+                            step_var = step_var.compute()
+                        steps.append(step_var)
+                    temp_var = xr.concat(steps, dim="time")
+                    filtered_vars.append(temp_var)
+            del temp_ds
+            print("Variables filtered. Merging...")
+            ds = xr.merge(filtered_vars)
+        else:
+            filtered_vars = []
+            for date in dates:
+                temp_var = temp_ds.sel(time=date)
+                temp_var = temp_var.chunk()
+                if kwargs.get("verbose", False):
+                    with ProgressBar():
+                        temp_var = temp_var.compute()
+                else:
+                    temp_var = temp_var.compute()
+                filtered_vars.append(temp_var)
+            del temp_ds
+            print("Variables filtered. Merging...")
+            ds = xr.concat(filtered_vars, dim="time")
+
+        ds = ds.compute()
+
+        gc.collect()
 
         return ds, data_var_dict
 

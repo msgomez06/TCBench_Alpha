@@ -21,6 +21,7 @@ import gc
 import pandas as pd
 import numpy as np
 import xarray as xr
+import h5py
 
 # import xesmf as xe
 import joblib as jl
@@ -1332,6 +1333,8 @@ class tc_track:
             min_idx[2] - circum_points : min_idx[2] + circum_points + 1,
         ] = 1
 
+        # TODO: fix so that the mask wraps around the grid if the circum_points exceed the grid size
+
         return output
 
     def get_mask(self, timestamp, **kwargs):
@@ -1433,83 +1436,161 @@ class tc_track:
                     # Get the list of variables for the var type
                     var_list = data_collection.meta_dfs[var_type].index
 
+                    assert (
+                        len(var_list) > 0
+                    ), f"No variables found in {var_type} - note that long names are required for specifying reanalysis data variables"
+
                     # Check if variables to load are specified
                     if kwargs.get("reanal_variables", None):
                         assert isinstance(
                             kwargs["reanal_variables"], list
                         ), f"Invalid type for variables: {type(kwargs['reanal_variables'])}. Expected list"
                         var_list = var_list[var_list.isin(kwargs["reanal_variables"])]
-                        assert (
-                            len(var_list) > 0
-                        ), f"No variables found in {var_type} - note that long names are required for specifying reanalysis data variables"
 
-                    # Check if variables to ignore are specified
-                    # This will soon be deprecated
-                    # ignored_vars = kwargs.get("ignore_vars", None)
-                    # if ignored_vars:
-                    #     assert isinstance(
-                    #         ignored_vars, list
-                    #     ), f"Invalid type for ignored_vars: {type(ignored_vars)}. Expected list"
+                    # try loading the ReAnalysis dataset
+                    if hasattr(self, "ReAnal"):
+                        try:
+                            self.ReAnal.load()
+                            print("ReAnalysis data loaded successfully")
+                        except Exception as e:
+                            if kwargs.get("verbose", False):
+                                print(
+                                    f"Failed to load ReAnalysis data for {self.uid}. Error: {e}. ",
+                                    f"Proceeding with processing the data collection...",
+                                )
+                                traceback.print_exc()
 
-                    # if ignored_vars:
-                    #     var_list = var_list[~var_list.isin(ignored_vars)]
+                    if hasattr(self.ReAnal, "ds"):
+                        # assume the if 5 variables are present, then the data is already loaded
+                        if len(self.ReAnal.ds.data_vars) == 5:
+                            print(
+                                f"ReAnalysis data already loaded for {self.uid}. Skipping processing the data collection."
+                            )
+                            continue
 
                     # Get the metadata for the variables
                     var_meta = data_collection.meta_dfs[var_type].loc[var_list]
 
-                    for year in years:
-                        year = str(year)
-                        # Assert each variable in the collection is available for each
-                        # year the storm is active
-                        assert (
-                            len(var_meta[year]) == var_meta[year].sum()
-                        ), f"Missing variable data for {year}"
+                    if len(var_list) == 0:
+                        continue
 
-                    var_data, _ = data_collection.retrieve_ds(
-                        vars=[*var_list], dates=self.timestamps
-                    )
+                    var_dict = {}
+                    try:
+                        for var in var_list:
+                            for year in years:
+                                year = str(year)
+                                # Assert each variable in the collection is available for each
+                                # year the storm is active
+                                assert (
+                                    len(var_meta[year]) == var_meta[year].sum()
+                                ), f"Missing variable data for {year}"
 
-                    # get coordinate names
-                    (
-                        lat_coord,
-                        lon_coord,
-                        time_coord,
-                        level_coord,
-                        _,
-                    ) = get_coord_vars(var_data)
+                                var_data, name_dict = data_collection.retrieve_ds(
+                                    vars=[var], dates=self.timestamps, **kwargs
+                                )
+                                var_dict.update(name_dict)
 
-                    valid_steps = sanitize_timestamps(self.timestamps, var_data)
-                    valid_steps = pd.to_datetime(valid_steps)
-                    # Filter to only include 00, 06, 12, 18 time steps
-                    valid_steps = valid_steps[
-                        valid_steps.hour.isin([0, 6, 12, 18])
-                    ].values
+                                # get coordinate names
+                                (
+                                    lat_coord,
+                                    lon_coord,
+                                    time_coord,
+                                    level_coord,
+                                    _,
+                                ) = get_coord_vars(var_data)
 
-                    print(f"Processing time steps in parallel...")
-                    # Loop through each time step in parallel
-                    n_jobs = kwargs.get("n_jobs", jl.cpu_count())
-                    jl.Parallel(n_jobs=n_jobs // 4, verbose=2)(
-                        jl.delayed(self.process_timestep)(
-                            var_data.sel(time=t).copy(),
-                            **{
-                                "lat_coord": lat_coord,
-                                "lon_coord": lon_coord,
-                                "time_coord": time_coord,
-                                "level_coord": level_coord,
-                            },
-                            timestamp=t,
-                            **kwargs,
-                        )
-                        for t in valid_steps
-                    )
+                                valid_steps = sanitize_timestamps(
+                                    self.timestamps, var_data
+                                )
+                                valid_steps = pd.to_datetime(valid_steps)
 
-                    # Garbage collect to free up memory
-                    gc.collect()
+                                # Filter to only include 00, 06, 12, 18 time steps
+                                valid_steps = valid_steps[
+                                    valid_steps.hour.isin([0, 6, 12, 18])
+                                ].values
+                                # Filter to make sure only 00 minutes are included
+                                valid_steps = valid_steps[
+                                    valid_steps.minute == 0
+                                ].values
 
+                                ds_type = kwargs.get("masktype", "rect")
+
+                                if level_coord:
+                                    num_levels = var_data[level_coord].shape[0]
+                                else:
+                                    num_levels = 1
+
+                                attrs = var_data.attrs
+
+                                masks = []
+                                for timestamp in valid_steps:
+                                    mask = self.get_mask(
+                                        num_levels=num_levels,
+                                        timestamp=timestamp,
+                                        **kwargs,
+                                    )
+                                    masks.append(mask[None, ...])
+
+                                mask = np.vstack(masks)
+
+                                data = var_data.sel(time=valid_steps).where(mask)
+
+                                setattr(self.ReAnal, "ds", data)
+
+                                encoding = {}
+                                for data_var in data.data_vars:
+                                    encoding[data_var] = {
+                                        "original_shape": data[data_var].shape,
+                                        "_FillValue": data[data_var].encoding.get(
+                                            "_FillValue", -32767
+                                        ),
+                                        "dtype": kwargs.get("dtype", np.int16),
+                                        "add_offset": data[data_var]
+                                        .mean()
+                                        .compute()
+                                        .values,
+                                        "scale_factor": data[data_var]
+                                        .std()
+                                        .compute()
+                                        .values
+                                        / kwargs.get("scale_divisor", 2000),
+                                    }
+
+                                print(
+                                    f"Saving temporary file for {self.uid} to disk...",
+                                    flush=True,
+                                )
+                                # Check if the temporary directory, which is self.filepath + temp, exists
+                                temp_dir = os.path.join(self.filepath, "temp")
+                                if not os.path.exists(temp_dir):
+                                    os.makedirs(temp_dir)
+
+                                data.to_netcdf(
+                                    os.path.join(
+                                        temp_dir,
+                                        f"temp_{np.where(self.timestamps == timestamp)[0][0]}.{data_var}.{self.uid}.{ds_type}.nc",
+                                    ),
+                                    mode="w",
+                                    compute=True,
+                                    encoding=encoding,
+                                )
+
+                                del data, var_data
+                                gc.collect()
+                    # Exception for
+                    except FileNotFoundError as e:
+                        print(f"File not found: {e}", flush=True)
+                    except PermissionError as e:
+                        print(f"Permission error: {e}", flush=True)
+                    except OSError as e:
+                        print(f"OS error: {e}", flush=True)
+                    except h5py.H5Error as e:
+                        print(f"An HDF5 error occurred: {e}", flush=True)
+                    except Exception as e:
+                        print(f"An unexpected error occurred: {e}", flush=True)
                     # Read in the temporary files and merge them into the final file
                     file_list = os.listdir(os.path.join(self.filepath, "temp"))
-
-                    datavars = [*var_data.data_vars]
+                    datavars = [*var_dict.values()]
 
                     # Filter out files that do not include the temp preix, variable names, and UID
                     for file in file_list.copy():
@@ -1525,19 +1606,22 @@ class tc_track:
 
                         if not any(checker_list):
                             file_list.remove(file)
-                            print(
-                                f"Removing {file} from file list because it doesn't include {datavars}"
-                            )
+                            if kwargs.get("verbose", False):
+                                print(
+                                    f"Removing {file} from file list because it doesn't include {datavars}"
+                                )
                         elif "temp" not in file:
                             file_list.remove(file)
-                            print(
-                                f"Removing {file} from file list because it doesn't include temp"
-                            )
+                            if kwargs.get("verbose", False):
+                                print(
+                                    f"Removing {file} from file list because it doesn't include temp"
+                                )
                         elif self.uid not in file:
                             file_list.remove(file)
-                            print(
-                                f"Removing {file} from file list because it doesn't include {self.uid}"
-                            )
+                            if kwargs.get("verbose", False):
+                                print(
+                                    f"Removing {file} from file list because it doesn't include {self.uid}"
+                                )
 
                     # If temporary files are present, merge them into the final file
                     if len(file_list) > 0:
@@ -1547,8 +1631,8 @@ class tc_track:
                                 os.path.join(self.filepath, "temp", file)
                                 for file in file_list
                             ],
-                            concat_dim=time_coord,
-                            combine="nested",
+                            # concat_dim=time_coord,
+                            combine="by_coords",  # "nested",
                             parallel=True,
                         )
 
@@ -1571,6 +1655,7 @@ class tc_track:
                                 / kwargs.get("scale_divisor", 2000),
                             }
 
+                        print(f"Writing to file {self.ReAnal.filepath}...")
                         # if the UID dataset exists, merge the new data into it
                         if os.path.exists(self.ReAnal.filepath):
                             print(f"Merging into {self.uid}...")
@@ -1610,10 +1695,8 @@ class tc_track:
                         # delete the temporary files
                         for file in file_list:
                             os.remove(os.path.join(self.filepath, "temp", file))
-
-                        # Garbage collect to free up memory
-                        gc.collect()
-
+                    else:
+                        print("No temporary files found. Skipping...")
                     # for var in var_list:
                     #     ##TODO: check if file exsits and if it does, check if the variable is already in the file
                     #     # if it is, skip it
@@ -2019,26 +2102,6 @@ class tc_track:
 
         var_list = None
 
-        # # Check if the dataset doesn't exist in the object
-        # if not hasattr(self.ReAnal, "ds"):
-        #     # Check if the dataset exists on disk
-        #     self.ReAnal.load()
-
-        # # Check if the dataset exists in the object after checking disk
-        # if hasattr(self.ReAnal, f"ds"):
-        #     # Check if the data variables are already in the dataset
-        #     for var in data.data_vars:
-        #         if var in self.ReAnal.ds.data_vars:
-        #             print(f"Variable {var} already in dataset. Skipping...")
-        #         else:
-        #             # print(f"Adding variable {var} to processing list...")
-        #             if not var_list:
-        #                 var_list = [var]
-        #             else:
-        #                 var_list.append(var)
-        # elif var_list is None:  # add all the datavars to the list
-        #     var_list = list(data.data_vars)
-
         var_list = list(data.data_vars)
 
         if var_list is not None:
@@ -2074,6 +2137,7 @@ class tc_track:
                     / kwargs.get("scale_divisor", 2000),
                 }
 
+            print(f"Saving temporary file for {self.uid} to disk...", flush=True)
             # Check if the temporary directory, which is self.filepath + temp, exists
             temp_dir = os.path.join(self.filepath, "temp")
             if not os.path.exists(temp_dir):
@@ -2088,12 +2152,6 @@ class tc_track:
                 compute=True,
                 encoding=encoding,
             )
-
-            data.close()
-            del data
-            if hasattr(self.ReAnal, f"ds"):
-                delattr(self.ReAnal, "ds")
-            gc.collect()
 
     def load_data(self, **kwargs):
         """

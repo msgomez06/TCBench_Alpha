@@ -29,8 +29,8 @@ full_data = toolbox.read_hist_track_file(
     tracks_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/"
 )
 # %%
-data = full_data[full_data.ISO_TIME.dt.year == 2017]
-storm = data[data.NAME == "MARIA"]
+data = full_data[full_data.ISO_TIME.dt.year == 2020]
+storm = data[data.NAME == "LAURA"]
 
 # %%
 if __name__ == "__main__":
@@ -46,7 +46,7 @@ if __name__ == "__main__":
         pres=storm[constants.ibtracs_cols._track_cols__metadata.get("PRES")].to_numpy(),
         datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
         storm_season=storm.SEASON.iloc[0],
-        ai_model="fourcastnetv2",
+        ai_model="panguweather",
     )
 
     # %%
@@ -54,14 +54,15 @@ if __name__ == "__main__":
         track.ai.load()
         track.ai.ds.z500.attrs["longname"] = "500 hPa Geopotential Height"
         track.ai.ds.t850.attrs["longname"] = "850 hPa Temperature"
+        msl_attrs = track.ai.ds.msl.attrs
 
         # convert msl to hPa
         track.ai.ds["msl"] = track.ai.ds.msl / 100
+        track.ai.ds.msl.attrs = msl_attrs
 
         track.ai.animate_var("u10", plot_kwargs={"cmap": "seismic"})
         track.ai.animate_var("msl", plot_kwargs={"cmap": "twilight"})
         track.ai.animate_var("v10", plot_kwargs={"cmap": "seismic"})
-
         track.ai.animate_var("z500", plot_kwargs={"cmap": "twilight"})
         track.ai.animate_var("t850", plot_kwargs={"cmap": "seismic"})
 
@@ -80,31 +81,31 @@ if __name__ == "__main__":
     # track.AI_ds.msl.attrs = msl_attrs
 
     # track.animate_AI_ds(var="msl", plot_kwargs={"cmap": "twilight"})
-    # track.animate_AI_ds(var="wind_speed", plot_kwargs={"cmap": "seismic"})
-    # %%
-    data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
-    save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
+    # # track.animate_AI_ds(var="wind_speed", plot_kwargs={"cmap": "seismic"})
+    # # %%
+    # data_dir = "/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/ECMWF/ERA5/"
+    # save_path = "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/"
 
-    dc = dlib.Data_Collection(data_dir)
+    # dc = dlib.Data_Collection(data_dir)
 
-    # %%
+    # # %%
 
-    track.process_data_collection(
-        dc,
-        reanal_variables=[
-            "10m_u_component_of_wind",
-            "10m_v_component_of_wind",
-            "mean_sea_level_pressure",
-            "temperature",
-            "geopotential",
-        ],
-        masktype="rect",
-        circum_points=30 * 4,
-        plevels={"temperature": [850], "geopotential": [500]},
-        verbose=True,
-        n_jobs=4,
-        # n_workers=16,
-        # mem_limit="40GB",
-    )
+    # track.process_data_collection(
+    #     dc,
+    #     reanal_variables=[
+    #         "10m_u_component_of_wind",
+    #         "10m_v_component_of_wind",
+    #         "mean_sea_level_pressure",
+    #         "temperature",
+    #         "geopotential",
+    #     ],
+    #     masktype="rect",
+    #     circum_points=30 * 4,
+    #     plevels={"temperature": [850], "geopotential": [500]},
+    #     verbose=True,
+    #     n_jobs=4,
+    #     # n_workers=16,
+    #     # mem_limit="40GB",
+    # )
 
 # %%

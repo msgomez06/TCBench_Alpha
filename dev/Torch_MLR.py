@@ -29,6 +29,7 @@ import metrics, baselines
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error
 import argparse
 
+# %%
 if __name__ == "__main__":
     # emulate system arguments
     emulate = False
@@ -43,13 +44,12 @@ if __name__ == "__main__":
             "6",
             "--max_leadtime",
             "24",
-            # "--use_gpu",
+            "--use_gpu",
             "--verbose",
-            "--reanalysis",
         ]
 
     # Read in arguments with argparse
-    parser = argparse.ArgumentParser(description="Train a CNN model")
+    parser = argparse.ArgumentParser(description="Train an MLR model")
     parser.add_argument(
         "--datadir",
         type=str,
@@ -125,12 +125,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--cnn_width",
-        type=str,
-        default="[32,64,128]",
-    )
-
-    parser.add_argument(
         "--dropout",
         type=float,
         default=0.25,
@@ -178,6 +172,7 @@ if __name__ == "__main__":
     datadir = args.datadir
     cache_dir = args.cache_dir + f"_{args.ai_model}"
     result_dir = args.result_dir
+    dask.config.set(scheduler="threads")
 
     # Check for GPU availability
     if torch.cuda.is_available() and not args.ignore_gpu:
@@ -208,7 +203,7 @@ if __name__ == "__main__":
             test_strategy="custom",
             base_position=True,
             cache_dir=cache_dir,
-            use_cached=not args.overwrite_cache,
+            # use_cached=not args.overwrite_cache,
             verbose=args.verbose,
             debug=args.debug,
         )
@@ -230,16 +225,33 @@ if __name__ == "__main__":
             debug=args.debug,
         )
 
+    # print("Loading datasets...", flush=True)
+    # sets, data = toolbox.get_ai_sets(
+    #     {
+    #         "train": years[:-2],
+    #         "validation": years[-2:],
+    #         # "test": [2020],
+    #     },
+    #     datadir=datadir,
+    #     test_strategy="custom",
+    #     base_position=True,
+    #     ai_model=args.ai_model,
+    #     cache_dir=cache_dir,
+    #     # use_cached=not args.overwrite_cache,
+    #     verbose=args.verbose,
+    #     debug=args.debug,
+    # )
+
     # create a mask for the leadtimes
     train_ldt_mask = da.logical_and(
-        data["train"]["leadtime"] >= args.min_leadtime,
-        data["train"]["leadtime"] <= args.max_leadtime,
+        (data["train"]["leadtime"] >= args.min_leadtime),
+        (data["train"]["leadtime"] <= args.max_leadtime),
     )
     train_ldt_mask = np.squeeze(train_ldt_mask.compute())
 
     validation_ldt_mask = da.logical_and(
-        data["validation"]["leadtime"] >= args.min_leadtime,
-        data["validation"]["leadtime"] <= args.max_leadtime,
+        (data["validation"]["leadtime"] >= args.min_leadtime),
+        (data["validation"]["leadtime"] <= args.max_leadtime),
     )
     validation_ldt_mask = np.squeeze(validation_ldt_mask.compute())
 
@@ -390,7 +402,7 @@ if __name__ == "__main__":
         if (calc_device == torch.device("cpu") and num_cores > 1)
         else num_cores
     )
-    dask.config.set(scheduler="synchronous")
+    dask.config.set(scheduler="threads")
 
     # We then instantiate the DaskDataset class for the training and validation sets.
     # Validation first because it's smaller and will be used to evaluate if the code
@@ -410,6 +422,7 @@ if __name__ == "__main__":
         num_workers=num_cores,
         track=valid_positions,
         leadtimes=validation_leadtimes,
+        chunk_size=512,
         # load_into_memory=True,
     )
 
@@ -435,6 +448,7 @@ if __name__ == "__main__":
         num_workers=num_cores,
         track=train_positions,
         leadtimes=train_leadtimes,
+        chunk_size=512,
         # load_into_memory=True,
     )
     train_loader = mlf.make_dataloader(
@@ -445,17 +459,13 @@ if __name__ == "__main__":
         input("Press Enter to continue...")
     #  Model
     # We begin by instantiating our baseline model
-    CNN = baselines.RegularizedCNN(
+    MLR = baselines.TorchMLR(
         deterministic=True if args.mode == "deterministic" else False,
         num_scalars=train_dataset.num_scalars,
         input_cols=5 - len(json.loads(args.ablate_cols)),
-        cnn_widths=json.loads(args.cnn_width),
-        fc_width=args.fc_width,
-        dropout=args.dropout,
-        dropout2d=args.dropout,
     ).to(calc_device)
 
-    optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-4)  # , weight_decay=1e-4)
+    optimizer = torch.optim.Adam(MLR.parameters(), lr=1e-4)  # , weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CyclicLR(
         optimizer, base_lr=1e-5, max_lr=1e-3, step_size_up=10
     )
@@ -478,7 +488,7 @@ if __name__ == "__main__":
             i += 1
             optimizer.zero_grad()
 
-            prediction = CNN(x=AI_X, scalars=scalars)
+            prediction = MLR(x=AI_X, scalars=scalars)
             batch_loss = loss_func(prediction, target)
 
             batch_loss.backward()
@@ -507,7 +517,8 @@ if __name__ == "__main__":
         with torch.no_grad():
             for AI_X, scalars, target in validation_loader:
                 i += 1
-                prediction = CNN(x=AI_X, scalars=scalars)
+                print(f"shapes: {AI_X.shape, scalars.shape, target.shape}")
+                prediction = MLR(x=AI_X, scalars=scalars)
                 batch_loss = loss_func(prediction, target)
 
                 val_loss += batch_loss.item()
@@ -527,10 +538,10 @@ if __name__ == "__main__":
         # Save if the validation loss is the best so far
         if val_loss <= max(val_losses):
             torch.save(
-                CNN,
+                MLR,
                 os.path.join(
                     result_dir,
-                    f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}_{args.cnn_width}.pt",
+                    f"best_model_{str(MLR)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}.pt",
                 ),
             )
 
@@ -557,7 +568,7 @@ if __name__ == "__main__":
         with open(
             os.path.join(
                 result_dir,
-                f"CNN_{str(CNN)}_losses_{start_time}_{args.ai_model}_{args.mode}_{args.cnn_width}.pkl",
+                f"MLR_{str(MLR)}_losses_{start_time}_{args.ai_model}_{args.mode}.pkl",
             ),
             "wb",
         ) as f:
@@ -587,7 +598,7 @@ if __name__ == "__main__":
         toolbox.plot_facecolors(fig=fig, axes=ax)
         fig.savefig(
             os.path.join(
-                result_dir, f"CNN_{str(CNN)}_{args.ai_model}_losses_{start_time}.png"
+                result_dir, f"MLR_{str(MLR)}_{args.ai_model}_losses_{start_time}.png"
             )
         )
 

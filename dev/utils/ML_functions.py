@@ -20,6 +20,7 @@ import os
 import warnings
 import xarray as xr
 from dask import optimize
+import dask.array as da
 
 # %% Classes
 ## TODO: Add docstrings, add type hints, add error handling
@@ -185,3 +186,15 @@ def latlon_to_sincos(positions):
     return np.stack(
         [np.sin(lat_rad), np.cos(lat_rad), np.sin(lon_rad), np.cos(lon_rad)], axis=1
     )
+
+
+def uv_to_magAngle(data, u_idx, v_idx):
+    # Replace u and v with magnitude and angle
+    u = data[:, u_idx]
+    v = data[:, v_idx]
+    mag = da.sqrt(u**2 + v**2)
+    angle = da.arctan2(v, u)
+
+    data[:, u_idx] = mag
+    data[:, v_idx] = angle
+    return data

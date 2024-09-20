@@ -792,15 +792,6 @@ class Regularized_Dilated_CNN(TC_DeltaIntensity_CNN):
         return x
 
 
-class LinearRegressor(nn.Module):
-    def __init__(self, input_dim):
-        super(LinearRegressor, self).__init__()
-        self.linear = nn.Linear(input_dim, 1)  # Linear layer
-
-    def forward(self, x):
-        return self.linear(x)
-
-
 class SimpleCNN(nn.Module):
     def __str__(self):
         return "Simple_CNN"
@@ -861,7 +852,8 @@ class SimpleCNN(nn.Module):
 
         # We will encode the baseline intensity with a dense layer
         self.fc2 = nn.Linear(num_scalars, num_scalars * 8)
-        self.fc3 = nn.Linear(
+        self.fc3 = nn.Linear(num_scalars * 8, num_scalars * 8)
+        self.fc4 = nn.Linear(
             fc_width + num_scalars * 8, 2 if kwargs.get("deterministic", False) else 4
         )
 
@@ -871,10 +863,11 @@ class SimpleCNN(nn.Module):
         x = self.pool(F.relu(self.conv3(x)))
         x = x.view(-1, self.flat_size)
         x = F.relu(self.fc1(x))
-        scalars = torch.squeeze(F.relu(self.fc2(scalars)))
+        scalars = F.relu(self.fc2(scalars))
+        scalars = torch.squeeze(F.relu(self.fc3(scalars)))
         # Concatenate the base intensity with the output of the dense layer
         x = torch.cat([x, scalars], dim=1)
-        x = self.fc3(x)
+        x = self.fc4(x)
         return x
 
 
@@ -888,15 +881,53 @@ class RegularizedCNN(SimpleCNN):
         self.dropout = kwargs.get("dropout", 0.25)
 
     def forward(self, x, scalars):
-        x = F.dropout2d(self.pool(F.relu(self.conv1(x))), p=self.dropout2d)
-        x = F.dropout2d(self.pool(F.relu(self.conv2(x))), p=self.dropout2d)
-        x = F.dropout2d(self.pool(F.relu(self.conv3(x))), p=self.dropout2d)
+        x = F.dropout2d(self.pool(F.hardswish(self.conv1(x))), p=self.dropout2d)
+        x = F.dropout2d(self.pool(F.hardswish(self.conv2(x))), p=self.dropout2d)
+        x = F.dropout2d(self.pool(F.hardswish(self.conv3(x))), p=self.dropout2d)
         x = x.view(-1, self.flat_size)
-        x = F.dropout(F.relu(self.fc1(x)), p=self.dropout)
-        scalars = torch.squeeze(F.dropout(F.relu(self.fc2(scalars)), p=self.dropout))
+        x = F.dropout(F.hardswish(self.fc1(x)), p=self.dropout)
+        scalars = F.dropout(F.hardswish(self.fc2(scalars)), p=self.dropout)
+        scalars = torch.squeeze(
+            F.dropout(F.hardswish(self.fc3(scalars)), p=self.dropout)
+        )
+        if scalars.dim() == 1:
+            scalars = scalars.unsqueeze(0)
         # Concatenate the base intensity with the output of the dense layer
         x = torch.cat([x, scalars], dim=1)
-        x = self.fc3(x)
+        x = self.fc4(x)
+        return x
+
+
+# %%
+
+
+class TorchMLR(nn.Module):
+    def __str__(self):
+        return "TorchMLR"
+
+    def __init__(self, **kwargs):
+        super(TorchMLR, self).__init__()
+
+        input_cols = kwargs.get("input_cols", 5)
+        num_scalars = kwargs.get("num_scalars", 2)
+
+        self.linear = nn.Linear(
+            input_cols * 2 + num_scalars, 2 if kwargs.get("deterministic", False) else 4
+        )  # Linear layer
+
+    def forward(self, x, scalars):
+        # Find the maximum and min values across the x channels
+        maxs = x.max(dim=3).values.max(dim=2).values
+        mins = x.min(dim=3).values.min(dim=2).values
+
+        scalars = torch.squeeze(scalars)
+        if scalars.dim() == 1:
+            scalars = scalars.unsqueeze(0)
+            print(scalars.shape)
+
+        # Concatenate the max and min values with the scalar inputs
+        x = torch.cat([maxs, mins, scalars], dim=1)
+        x = self.linear(x)
         return x
 
 

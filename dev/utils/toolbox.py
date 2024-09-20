@@ -21,7 +21,6 @@ import gc
 import pandas as pd
 import numpy as np
 import xarray as xr
-import h5py
 
 # import xesmf as xe
 import joblib as jl
@@ -38,6 +37,7 @@ from memory_profiler import profile
 from datetime import datetime
 import dask.array as da
 import pickle
+import hashlib
 
 # TCBench Libraries
 try:
@@ -163,6 +163,33 @@ def axis_generator(**kwargs):
     lon_vector = np.unique(lon_vector)
 
     return lat_vector, lon_vector
+
+
+def fnv1a_hash(data):
+    # FNV-1a 32-bit hash parameters
+    fnv_prime = 0x01000193
+    fnv_offset_basis = 0x811C9DC5
+
+    hash_value = fnv_offset_basis
+    for byte in data.encode():
+        hash_value ^= byte
+        hash_value *= fnv_prime
+        hash_value &= 0xFFFFFFFF  # Ensure hash_value stays within 32-bit range
+
+    return hash_value
+
+
+def make_short_id(*args):
+    # Step 1: Concatenate the strings
+    concatenated_string = "".join(args)
+
+    # Step 2: Hash the concatenated string using FNV-1a
+    hash_value = fnv1a_hash(concatenated_string)
+
+    # Step 3: Convert the hash to a hexadecimal string and truncate to 8 characters
+    identifier = f"{hash_value:08x}"
+
+    return identifier
 
 
 # Lat-lon grid generator
@@ -956,6 +983,326 @@ def get_ai_sets(splits: dict, **kwargs):
                     raise NotImplementedError(
                         "Base intensity calculation not implemented for serial processing"
                     )
+                raise NotImplementedError("Serial processing not implemented")
+                for season, storms in data_set.items():
+                    if kwargs.get("progress_indicator", True):
+                        print(f"Processing {season}", end="", flush=True)
+                    for idx, storm in enumerate(storms):
+                        if kwargs.get("progress_indicator", True) and (idx // 10 == 0):
+                            print(".", end="", flush=True)
+                        inputs = None
+                        outputs = None
+                        try:
+                            inputs, outputs, t, leads = storm.serve_ai_data(**kwargs)
+                        except Exception as e:
+                            if kwargs.get("debug", False):
+                                print(f"Failed to process {str(storm)}")
+                                print(f"Error: {e}")
+                        if (inputs is not None) and (outputs is not None):
+                            if input_data is None:
+                                input_data = inputs
+                                target_data = outputs
+                                t_data = t
+                                lead_data = leads
+                            else:
+                                input_data = da.vstack((input_data, inputs))
+                                target_data = da.vstack((target_data, outputs))
+                                t_data = np.hstack((t_data, t))
+                                lead_data = np.hstack((lead_data, leads))
+                    if kwargs.get("progress_indicator", True):
+                        print(" Done!", flush=True)
+
+            data[key] = {
+                "inputs": input_data,
+                "outputs": target_data,
+                "time": t_data[:, None],
+                "leadtime": lead_data[:, None],
+            }
+            if kwargs.get("base_intensity", True):
+                data[key]["base_intensity"] = intensity
+                if kwargs.get("base_position", False):
+                    data[key]["base_position"] = position
+
+    return sets, data
+
+
+def get_reanal_sets(splits: dict, **kwargs):
+    """
+    Function to retrieve the training, validation, and testing set for TC tracks.
+    The function will return a list of TC_tracks and a dictionary with the information
+    retrieved by the serving function. By default we will assume we will be working
+    with AI_data
+
+    inputs:
+        splits: dict, required
+            Dictionary containing the split information for the data. The dictionary
+            should contain the following keys:
+                - train
+                - val (optional)
+                - test
+            Each key should contain a list of floats corresponding to the relative size
+            between the splits.
+            If the test_strategy is 'custom', the test split should contain a list of
+            storm seasons to use for the test set.
+        test_strategy: STR, optional
+            Strategy to use for the test set. The default is 'last', which will leave
+            the most recent storm seasons for the test set. Other options include:
+                - 'random': Randomly select the test set
+                - 'first': Leave the first storm seasons for the test set
+                - 'custom': Use a custom list of storm seasons for the test set
+
+    outputs:
+        sets: dict
+            Dictionary containing the sets of storm seasons for training, validation, and
+            testing
+        data: dict
+            Dictionary containing the AI data for each set
+            Keys: 'train', 'val', 'test'
+
+    parameters:
+        datadir: STR, optional
+            Path to the directory containing the storm data. The default is
+            os.path.join(repo_path, 'data')
+        debug: BOOL, optional
+            Flag to print out debugging information. The default is False
+        verbose: Bool, optional
+            Flag to print out verbose information. The default is False
+    """
+
+    assert isinstance(
+        splits, dict
+    ), f"Invalid type for splits: {type(splits)}. Expected dict"
+
+    assert np.all(
+        [key in ["train", "test", "validation"] for key in splits.keys()]
+    ), "Invalid split values. Unknown key in splits dictionary; expected 'train', 'test', and 'validation' keys"
+
+    datadir_path = kwargs.get("datadir", os.path.join(repo_path, "data"))
+
+    # get the folders in datadir and filter out the ones that are not storm seasons
+    season_folders = [folder for folder in os.listdir(datadir_path) if folder.isdigit()]
+    season_folders = list(np.sort(np.array(season_folders).astype(int)))
+
+    test_strategy = kwargs.get("test_strategy", "last")
+    if test_strategy in ["last", "random", "first"]:
+        train_set = None
+        val_set = None
+        test_set = None
+        assert (np.sum([value for value in splits.values()]) <= 1) and (
+            np.all([value > 0 for value in splits.values()])
+        ), (
+            "Invalid split values. Sum of splits should be less than "
+            "or equal to 1, and all splits must be greater than 0"
+        )
+        if test_strategy == "last":
+            test_size = int(np.ceil(splits["test"] * len(season_folders)))
+            test_set = season_folders[-test_size:]
+            other_folders = season_folders[:-test_size]
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(season_folders)))
+                val_set = other_folders[-val_size:]
+                train_set = other_folders[:-val_size]
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(season_folders)))
+                    val_set = other_folders[-val_size:]
+                    train_set = other_folders[:-val_size]
+                else:
+                    train_set = other_folders
+        elif test_strategy == "random":
+            test_size = int(np.ceil(splits["test"] * len(season_folders)))
+            test_set = np.random.choice(season_folders, test_size, replace=False)
+            other_folders = np.setdiff1d(season_folders, test_set)
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(season_folders)))
+                val_set = np.random.choice(other_folders, val_size, replace=False)
+                train_set = np.setdiff1d(other_folders, val_set)
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(season_folders)))
+                    val_set = np.random.choice(other_folders, val_size, replace=False)
+                    train_set = np.setdiff1d(other_folders, val_set)
+                else:
+                    train_set = other_folders
+        elif test_strategy == "first":
+            test_size = int(np.ceil(splits["test"] * len(season_folders)))
+            test_set = season_folders[:test_size]
+            other_folders = season_folders[test_size:]
+            if "validation" in splits.keys():
+                val_size = int(np.ceil(splits["validation"] * len(season_folders)))
+                val_set = other_folders[:val_size]
+                train_set = other_folders[val_size:]
+            else:
+                if splits["test"] + splits["train"] < 1:
+                    validation_size = 1 - splits["test"] - splits["train"]
+                    if validation_size > splits["test"]:
+                        round_func = np.floor
+                    else:
+                        round_func = np.ceil
+                    val_size = int(round_func(validation_size * len(season_folders)))
+                    val_set = other_folders[:val_size]
+                    train_set = other_folders[val_size:]
+                else:
+                    train_set = other_folders
+
+        sets = {
+            "train": get_TC_seasons(season_list=train_set, **kwargs),
+            "test": get_TC_seasons(season_list=test_set, **kwargs),
+        }
+        if val_set is not None:
+            sets["validation"] = get_TC_seasons(season_list=val_set, **kwargs)
+    elif test_strategy == "custom":
+        sets = {}
+        for key, item in splits.items():
+            assert isinstance(
+                item, list
+            ), f"Invalid type for {key} in splits: {type(item)}. Expected list."
+            assert np.all(
+                [isinstance(value, int) for value in item]
+            ), f"Invalid type for values in {key} in splits: {type(item)}. Expected int."
+            assert np.all(
+                [value in season_folders for value in item]
+            ), f"Invalid values for {key} in splits: {item}. Season not found in datadir."
+            assert key in ["train", "test", "validation"], "Unsupported key in splits."
+            assert len(item) > 0, f"Empty list for {key} in splits."
+            sets[key] = get_TC_seasons(
+                season_list=item, datadir_path=datadir_path, **kwargs
+            )
+
+    else:
+        raise ValueError(f"Unsupported test strategy {test_strategy}")
+
+    data = {}
+    for key, data_set in sets.items():
+        if isinstance(data_set, dict):
+            input_data = None
+            target_data = None
+            t_data = None
+            lead_data = None
+
+            if kwargs.get("base_intensity", True):
+                intensity = None
+                if kwargs.get("base_position", False):
+                    position = None
+
+            # Parallel processing
+            if kwargs.get("parallel", True):
+                for season, storms in data_set.items():
+                    progress = kwargs.get("progress_indicator", True)
+                    if progress:
+                        print(f"Processing {season}", end="", flush=True)
+
+                        def processor(storm, **kwargs):
+                            if kwargs.get("verbose", False):
+                                print(f"Processing {str(storm)}")
+                            result = storm.ReAnal.serve(**kwargs)
+                            # if result is not None:
+                            #     for item in result:
+                            #         print(item.shape)
+
+                            if kwargs.get("base_position", False):
+                                assert kwargs.get(
+                                    "base_intensity", True
+                                ), "Base position requires that the base intensity be requested. Set base_intensity to True."
+
+                            if (
+                                kwargs.get("base_intensity", True)
+                                and result is not None
+                                and result[0].size > 0
+                            ):
+                                _, _, t, leads = result
+                                base_time = t - leads.astype("timedelta64[h]")
+
+                                matches = base_time[:, None] == storm.timestamps
+                                # Use numpy.nonzero to find the indices of the matches
+                                indices = np.nonzero(matches)[1]
+
+                                base_intensity = np.vstack(
+                                    [
+                                        storm.wind[indices].astype(int),
+                                        storm.pressure[indices].astype(int),
+                                    ]
+                                ).T
+
+                                if kwargs.get("base_position", False):
+                                    base_position = np.vstack(
+                                        [
+                                            storm.track[indices, 0].astype(float),
+                                            storm.track[indices, 1].astype(float),
+                                        ]
+                                    ).T
+
+                                    result = (*result, base_intensity, base_position)
+                                else:
+                                    result = (*result, base_intensity)
+
+                                if progress:
+                                    print(".", end="", flush=True)
+
+                                return result
+
+                    n_jobs = kwargs.get("n_jobs", jl.cpu_count())
+                    temp_data = jl.Parallel(n_jobs=n_jobs)(
+                        jl.delayed(processor)(storm, **kwargs) for storm in storms
+                    )
+                    if progress:
+                        print(" Done!", flush=True)
+
+                    # Remove any empty entries
+                    temp_data = [entry for entry in temp_data if entry is not None]
+
+                    for result in temp_data:
+                        if kwargs.get("base_intensity", True):
+                            if kwargs.get("base_position", False):
+                                (
+                                    inputs,
+                                    outputs,
+                                    t,
+                                    leads,
+                                    base_intensity,
+                                    base_position,
+                                ) = result
+                            else:
+                                inputs, outputs, t, leads, base_intensity = result
+                        else:
+                            inputs, outputs, t, leads = result
+
+                        if input_data is None:
+                            input_data = inputs
+                            target_data = outputs
+                            t_data = t
+                            lead_data = leads
+                            if kwargs.get("base_intensity", True):
+                                if kwargs.get("base_position", False):
+                                    position = base_position
+                                intensity = base_intensity
+                        else:
+                            input_data = da.vstack((input_data, inputs))
+                            target_data = da.vstack((target_data, outputs))
+                            t_data = np.hstack((t_data, t))
+                            lead_data = np.hstack((lead_data, leads))
+                            if kwargs.get("base_intensity", True):
+                                intensity = da.vstack((intensity, base_intensity))
+                                if kwargs.get("base_position", False):
+                                    position = da.vstack((position, base_position))
+
+            # Serial processing
+            else:
+                if kwargs.get("base_intensity", True):
+                    raise NotImplementedError(
+                        "Base intensity calculation not implemented for serial processing"
+                    )
+                raise NotImplementedError("Serial processing deprecated")
                 for season, storms in data_set.items():
                     if kwargs.get("progress_indicator", True):
                         print(f"Processing {season}", end="", flush=True)
@@ -1485,8 +1832,12 @@ class tc_track:
                                     len(var_meta[year]) == var_meta[year].sum()
                                 ), f"Missing variable data for {year}"
 
+                                dates = pd.to_datetime(self.timestamps)
+                                dates = dates[dates.hour.isin([0, 6, 12, 18])]
+                                dates = dates[dates.minute == 0].values
+
                                 var_data, name_dict = data_collection.retrieve_ds(
-                                    vars=[var], dates=self.timestamps, **kwargs
+                                    vars=[var], dates=dates, **kwargs
                                 )
                                 var_dict.update(name_dict)
 
@@ -1507,7 +1858,7 @@ class tc_track:
                                 # Filter to only include 00, 06, 12, 18 time steps
                                 valid_steps = valid_steps[
                                     valid_steps.hour.isin([0, 6, 12, 18])
-                                ].values
+                                ]
                                 # Filter to make sure only 00 minutes are included
                                 valid_steps = valid_steps[
                                     valid_steps.minute == 0
@@ -1580,14 +1931,16 @@ class tc_track:
                     # Exception for
                     except FileNotFoundError as e:
                         print(f"File not found: {e}", flush=True)
+                        traceback.print_exc()
                     except PermissionError as e:
                         print(f"Permission error: {e}", flush=True)
+                        traceback.print_exc()
                     except OSError as e:
                         print(f"OS error: {e}", flush=True)
-                    except h5py.H5Error as e:
-                        print(f"An HDF5 error occurred: {e}", flush=True)
+                        traceback.print_exc()
                     except Exception as e:
                         print(f"An unexpected error occurred: {e}", flush=True)
+                        traceback.print_exc()
                     # Read in the temporary files and merge them into the final file
                     file_list = os.listdir(os.path.join(self.filepath, "temp"))
                     datavars = [*var_dict.values()]
@@ -2697,7 +3050,7 @@ class AI:
 
             if kwargs.get("verbose", False) and kwargs.get("use_cached", True):
                 print(
-                    f"used_chached disabled or cache files not found for {self.__parent.uid}. Rebuilding cache..."
+                    f"used_cached disabled or cache files not found for {self.__parent.uid}. Rebuilding cache..."
                 )
 
             # Check if the dataset doesn't exist in the object
@@ -3041,6 +3394,382 @@ class ReAnal:
                         " with a Reanalysis data collection object as an argument."
                     )
 
+    def serve(self, **kwargs):
+        try:
+            # check if the cache dir exists
+            cache_dtype = kwargs.get("cache_dtype", float)
+            # cache_dir = kwargs.get(
+            #     "cache_dir", os.path.join(self.datadir_path, "cache")
+            # )
+            load_from_cache = kwargs.get("use_cached", True)
+            # ai_model = kwargs.get("ai_model", "panguweather")
+
+            if os.path.exists(self.cache_dir) and load_from_cache:
+                try:
+                    # check if the cache files exist. If they don't exist, continue
+                    if not all(
+                        [
+                            os.path.exists(
+                                os.path.join(
+                                    self.cache_dir, f"{self.__parent.uid}_{file}.npy"
+                                )
+                            )
+                            for file in ["IC-X", "IC-Y", "IC-t", "IC-leads"]
+                        ]
+                    ):
+                        raise FileNotFoundError(
+                            "Cache files not found. Rebuilding cache..."
+                        )
+
+                    # load the files into dask arrays
+                    X = da.from_array(
+                        np.load(
+                            os.path.join(
+                                self.cache_dir, f"{self.__parent.uid}_IC-X.npy"
+                            ),
+                            mmap_mode="r",
+                        ),
+                        chunks=(kwargs.get("chunk_size", 256), 5, 241, 241),
+                    )
+                    Y = da.from_array(
+                        np.load(
+                            os.path.join(
+                                self.cache_dir, f"{self.__parent.uid}_IC-Y.npy"
+                            ),
+                            mmap_mode="r",
+                        )
+                    )
+                    t = da.from_array(
+                        np.load(
+                            os.path.join(
+                                self.cache_dir, f"{self.__parent.uid}_IC-t.npy"
+                            ),
+                            mmap_mode="r",
+                        )
+                    )
+                    leads = da.from_array(
+                        np.load(
+                            os.path.join(
+                                self.cache_dir, f"{self.__parent.uid}_IC-leads.npy"
+                            ),
+                            mmap_mode="r",
+                        )
+                    )
+                    if kwargs.get("verbose", False):
+                        print(
+                            f"Succesfully loaded IC cache files for {self.__parent.uid} from cache...",
+                            flush=True,
+                        )
+
+                    return X, Y, t, leads
+                except Exception as e:
+                    if kwargs.get("debug", False):
+                        print(
+                            f"Error loading IC cache files for {self.__parent.uid}. Rebuilding cache..."
+                        )
+                        if kwargs.get("verbose", False):
+                            print(e)
+            else:
+                if not os.path.exists(self.cache_dir):
+                    os.makedirs(self.cache_dir)
+
+            if kwargs.get("verbose", False) and kwargs.get("use_cached", True):
+                print(
+                    f"used_cached disabled or IC cache files not found for {self.__parent.uid}. Rebuilding cache..."
+                )
+
+            # Check if the dataset doesn't exist in the object
+
+            if not hasattr(self, "ds"):
+                # if it doesnt, try loading it
+                self.load(**kwargs)
+
+            assert hasattr(
+                self, "ds"
+            ), f"ReAnal dataset not found for {self.__parent.uid} with model {self.model}"
+
+            (_, _, time_coord, _, _) = get_coord_vars(self.ds)
+
+            # Get ground truth and valid timestamps
+            gt, stamps = self.__parent.get_ground_truth(**kwargs)
+
+            timedeltas = kwargs.get(
+                "timedeltas", [6, 12, 24, 48, 72, 96, 120, 144, 168]
+            )
+            timedeltas = np.array(timedeltas).astype("timedelta64[h]")
+
+            valid_stamps = sanitize_timestamps(stamps, self.ds, time_coord)
+
+            # assert that timedeltas as a list, numpy array, or tuple, and length > 0
+            assert (
+                isinstance(timedeltas, (list, np.ndarray, tuple))
+                and len(timedeltas) > 0
+            ), "Invalid timedeltas argument"
+
+            gt = gt[np.isin(stamps, valid_stamps)]
+            stamps = stamps[np.isin(stamps, valid_stamps)]
+
+            if len(gt) == 0:
+                if kwargs.get("verbose", False) or kwargs.get("debug", False):
+                    print(
+                        f"No valid timestamps found for {self.__parent.uid} with model {self.model}"
+                    )
+                return
+
+            # Get the AI data
+            inputs = None
+            targets = None
+            outstamps = None
+            out_leads = None
+            for stamp in stamps:
+                temp_ds = self.ds.sel({time_coord: stamp})
+                temp_ds = temp_ds.where(~temp_ds.isnull(), drop=True)
+
+                # timedeltas = temp_ds[leadtime_coord].values.astype("timedelta64[h]")
+                leadtimes = stamp + timedeltas
+
+                # make a boolean index to see what leadtime data we have a
+                # truth value for
+                bool_idx = np.isin(leadtimes, stamps)
+
+                # read in the data as a numpy array
+                out_data = temp_ds.to_array().values
+                # because we need to copy the IC data across leadtimes, we tile
+                # the ICS
+                out_data = np.tile(out_data, (bool_idx.sum(), 1, 1, 1))
+                out_targets = gt[np.isin(stamps, leadtimes[bool_idx])]
+
+                # base_targets = gt[stamps == stamp]
+                temp_stamps = leadtimes[bool_idx]
+                temp_leads = timedeltas[bool_idx].astype(int)
+
+                if outstamps is None:
+                    try:
+                        ##TODO: The following check appears to be and issue
+                        ## with the way the data is being filtered when processing
+                        ## the storm fields. My guess is that this is due to the
+                        ## crossing of the 0° longitude line. This should be fixed
+                        ## process_data_collection method.
+
+                        if (
+                            out_data.shape[-2:]
+                            != (
+                                241,
+                                241,
+                            )
+                            or out_data.shape[-3] != 5
+                        ):
+                            raise ValueError(
+                                f"Invalid shape for stamp {stamp}... Skipping..."
+                            )
+                        else:
+                            inputs = out_data
+                            targets = out_targets
+                            outstamps = temp_stamps  # leadtimes[bool_idx]
+                            # base_stamps = np.full_like(outstamps, stamp)
+                            out_leads = temp_leads.astype(int)
+
+                    except ValueError as e:
+                        if kwargs.get("verbose", False):
+                            print(f"Problem processing {stamp}... Skipping...")
+                            print(e)
+                else:
+                    try:
+                        if (out_data.shape[-2:] != (241, 241)) or (
+                            out_data.shape[-3] != 5
+                        ):
+                            raise ValueError(
+                                f"Invalid shape for stamp {stamp}... Skipping..."
+                            )
+                        else:
+                            inputs = np.vstack([inputs, out_data])
+                            targets = np.vstack([targets, out_targets])
+                            outstamps = np.hstack([outstamps, temp_stamps])
+                            out_leads = np.hstack([out_leads, temp_leads])
+
+                        # outstamps = np.hstack([outstamps, leadtimes[bool_idx]])
+                        # out_leads = np.hstack(
+                        #     [out_leads, temp_ds[leadtime_coord].values[bool_idx]]
+                        # )
+
+                    except ValueError as e:
+                        if kwargs.get("verbose", False):
+                            print(f"Problem processing {stamp}... Skipping...")
+                            print(e)
+
+            # save if the data is not empty
+            if inputs is not None:
+                # save the data to the cache
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-X.npy"),
+                    inputs,
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-Y.npy"),
+                    targets,
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-t.npy"),
+                    outstamps,
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-leads.npy"),
+                    out_leads,
+                )
+
+                # load saved files into dask arrays
+                X = da.from_array(
+                    np.load(
+                        os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-X.npy"),
+                        mmap_mode="r",
+                    ),
+                    chunks=(kwargs.get("chunk_size", 256), 5, 241, 241),
+                )
+                Y = da.from_array(
+                    np.load(
+                        os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-Y.npy"),
+                        mmap_mode="r",
+                    )
+                )
+                t = da.from_array(
+                    np.load(
+                        os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-t.npy"),
+                        mmap_mode="r",
+                    )
+                )
+                leads = da.from_array(
+                    np.load(
+                        os.path.join(
+                            self.cache_dir, f"{self.__parent.uid}_IC-leads.npy"
+                        ),
+                        mmap_mode="r",
+                    )
+                )
+                return X, Y, t, leads
+            else:
+                # save empty arrays to the cache
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-X.npy"),
+                    np.array([]),
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-Y.npy"),
+                    np.array([]),
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-t.npy"),
+                    np.array([]),
+                )
+                np.save(
+                    os.path.join(self.cache_dir, f"{self.__parent.uid}_IC-leads.npy"),
+                    np.array([]),
+                )
+                return np.array([]), np.array([]), np.array([]), np.array([])
+
+        except Exception as e:
+            if kwargs.get("verbose", False):
+                print(
+                    f"Error serving AI data for {self.__parent.uid} with model {self.model}"
+                )
+                print(traceback.format_exc())
+                # print(e)
+            return None
+
+    def animate_2d(self, **kwargs):
+        if not hasattr(self, "ds"):
+            self.load()
+        dpi = kwargs.get("dpi", 150)
+        save_path = kwargs.get(
+            "save_path",
+            f"/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/data/{self.__parent.name}_animation.gif",
+        )
+
+        self.ds["wind_magnitude"] = np.sqrt(self.ds["10u"] ** 2 + self.ds["10v"] ** 2)
+        self.ds["wind_direction"] = np.arctan2(self.ds["10v"], self.ds["10u"])
+
+        self.ds["wind_magnitude"].attrs = {
+            "long_name": "Wind magnitude",
+            "units": "m/s",
+        }
+
+        self.ds["wind_direction"].attrs = {
+            "long_name": "Wind direction",
+            "units": "radians",
+        }
+
+        # Check how many variables are in the dataset
+        if len(self.ds.data_vars) > 1:
+            numvars = len(self.ds.data_vars)
+
+        cmaps = [
+            "seismic",
+            "seismic",
+            "cividis_r",
+            "inferno",
+            "cividis_r",
+            "seismic",
+            "seismic",
+        ]
+
+        # Make a figure with 1 column and numvar rows
+        fig, axs = plt.subplots(
+            1,
+            numvars,
+            dpi=dpi,
+            figsize=(7 * numvars, 5),
+            # subplot_kw={"projection": ccrs.PlateCarree()},
+        )
+
+        minn, maxx = (
+            self.ds.min().to_array().values,
+            self.ds.max().to_array().values,
+        )
+
+        # Make the first frame:
+        for i in range(numvars):
+            data = self.ds.isel(time=0)
+            data = data.where(data.notnull(), drop=True)
+            # extent = data.latitude.min.values,
+            # ax.set_extent(extent, crs=ccrs.PlateCarree())
+            # axs[i].coastlines()
+            data[list(self.ds.data_vars)[i]].plot.imshow(
+                cmap=cmaps[i],
+                ax=axs[i],
+                vmin=minn[i],
+                vmax=maxx[i],
+                transform=ccrs.PlateCarree(),
+            )
+            axs[i].set_title(list(self.ds.data_vars)[i])
+
+        plt.tight_layout()
+
+        def update(frame):
+            for ax in axs:
+                ax.clear()
+            for i in range(numvars):
+                data = self.ds.isel(time=frame)
+                # axs[i].coastlines()
+                data = data.where(data.notnull(), drop=True)
+                data[list(self.ds.data_vars)[i]].plot.imshow(
+                    cmap=cmaps[i],
+                    ax=axs[i],
+                    vmin=minn[i],
+                    vmax=maxx[i],
+                    add_colorbar=False,
+                )
+
+                # axs[i].set_title(list(self.ds.data_vars)[i])
+
+        ani = FuncAnimation(
+            fig,
+            update,
+            np.arange(1, len(self.ds.time), 1),
+            blit=False,
+            interval=400,
+        )
+
+        ani.save(save_path)
+
     def animate_data(self, var, **kwargs):
         figsize = kwargs.get("figsize", (4, 6))
         dpi = kwargs.get("dpi", 150)
@@ -3050,22 +3779,21 @@ class ReAnal:
         )
 
         # Check if the dataset doesn't exist in the object
-        if not hasattr(self, f"{kwargs.get('ds_type', 'rad')}_ds"):
+        if not hasattr(self, "ds"):
             print("Data not yet loaded - trying to load it now...")
-            self.load_data(**kwargs)
+            self.load(**kwargs)
 
-        # Assert that the variable exists in the object data
-        assert (
-            var in self.__getattribute__(f"{kwargs.get('ds_type', 'rad')}_ds").data_vars
-        ), f"Variable {var} not found in dataset"
+        # # Assert that the variable exists in the object data
+        # assert (
+        #     var in self.__getattribute__(f"{kwargs.get('ds_type', 'rad')}_ds").data_vars
+        # ), f"Variable {var} not found in dataset"
 
         # get sanitized timestamps
-        valid_steps = sanitize_timestamps(
-            self.timestamps, self.__getattribute__(f"{kwargs.get('ds_type', 'rad')}_ds")
-        )
+        valid_steps = sanitize_timestamps(self.__parent.timestamps, self.ds)
 
         fig, ax = plt.subplots(
-            figsize=figsize, dpi=dpi, subplot_kw={"projection": "3d"}
+            figsize=figsize,
+            dpi=dpi,  # subplot_kw={"projection": "3d"}
         )
 
         minn, maxx = (
@@ -3102,143 +3830,143 @@ class ReAnal:
 
         ani.save(save_path)
 
-    def plot3D(self, var, timestamp, **kwargs):
-        """
-        Function to plot 3D data on a map, showing the variable in 3D for the given timestamps
+    # def plot3D(self, var, timestamp, **kwargs):
+    #     """
+    #     Function to plot 3D data on a map, showing the variable in 3D for the given timestamps
 
-        Based off of:
-        https://stackoverflow.com/questions/13570287/image-overlay-in-3d-plot
-        https://stackoverflow.com/questions/23785408/3d-cartopy-similar-to-matplotlib-basemap
-        https://stackoverflow.com/questions/48269014/contourf-in-3d-cartopy%5D
-        Parameters
-        ----------
-        var : STR, required
-            Variable to plot
+    #     Based off of:
+    #     https://stackoverflow.com/questions/13570287/image-overlay-in-3d-plot
+    #     https://stackoverflow.com/questions/23785408/3d-cartopy-similar-to-matplotlib-basemap
+    #     https://stackoverflow.com/questions/48269014/contourf-in-3d-cartopy%5D
+    #     Parameters
+    #     ----------
+    #     var : STR, required
+    #         Variable to plot
 
-        timestamp : STR, required
-            Timestamp to plot
+    #     timestamp : STR, required
+    #         Timestamp to plot
 
-        Returns
-        -------
-        None
+    #     Returns
+    #     -------
+    #     None
 
-        """
-        ignore_levels = kwargs.get("ignore_levels", None)
-        facecolor = kwargs.get("facecolor", (0.3, 0.3, 0.3))
-        text_color = kwargs.get("text_color", "white")
-        view_angles = kwargs.get("view_angles", (25, -45))
-        figsize = kwargs.get("figsize", (4, 6))
-        dpi = kwargs.get("dpi", 150)
-        cmap = kwargs.get("cmap", "seismic")
-        fig = kwargs.get("fig", None)
-        ax3d = kwargs.get("ax", None)
-        add_colorbar = kwargs.get("add_colorbar", True)
-        minn, maxx = kwargs.get("minn", None), kwargs.get("maxx", None)
+    #     """
+    #     ignore_levels = kwargs.get("ignore_levels", None)
+    #     facecolor = kwargs.get("facecolor", (0.3, 0.3, 0.3))
+    #     text_color = kwargs.get("text_color", "white")
+    #     view_angles = kwargs.get("view_angles", (25, -45))
+    #     figsize = kwargs.get("figsize", (4, 6))
+    #     dpi = kwargs.get("dpi", 150)
+    #     cmap = kwargs.get("cmap", "seismic")
+    #     fig = kwargs.get("fig", None)
+    #     ax3d = kwargs.get("ax", None)
+    #     add_colorbar = kwargs.get("add_colorbar", True)
+    #     minn, maxx = kwargs.get("minn", None), kwargs.get("maxx", None)
 
-        # Check if the dataset doesn't exist in the object
-        if not hasattr(self, f"{kwargs.get('ds_type', 'rad')}_ds"):
-            print("Data not yet loaded - trying to load it now...")
-            self.load_data(**kwargs)
+    #     # Check if the dataset doesn't exist in the object
+    #     if not hasattr(self, f"{kwargs.get('ds_type', 'rad')}_ds"):
+    #         print("Data not yet loaded - trying to load it now...")
+    #         self.load_data(**kwargs)
 
-        alpha = kwargs.get("alpha", 0.3)
-        data = getattr(self, f"{kwargs.get('ds_type', 'rad')}_ds")[var]
+    #     alpha = kwargs.get("alpha", 0.3)
+    #     data = getattr(self, f"{kwargs.get('ds_type', 'rad')}_ds")[var]
 
-        if ignore_levels:
-            data = data.sel(
-                {
-                    kwargs.get("level_coord", "level"): ~data[
-                        kwargs.get("level_coord", "level")
-                    ].isin(ignore_levels)
-                }
-            )
+    #     if ignore_levels:
+    #         data = data.sel(
+    #             {
+    #                 kwargs.get("level_coord", "level"): ~data[
+    #                     kwargs.get("level_coord", "level")
+    #                 ].isin(ignore_levels)
+    #             }
+    #         )
 
-        if fig is None and ax3d is None:
-            fig, ax3d = plt.subplots(
-                figsize=figsize, dpi=dpi, subplot_kw={"projection": "3d"}
-            )
-        elif (fig is not None) == (ax3d is None):  # xor
-            raise ValueError(
-                "Both fig and ax must be provided if providing the figure or the axes"
-            )
+    #     if fig is None and ax3d is None:
+    #         fig, ax3d = plt.subplots(
+    #             figsize=figsize, dpi=dpi, subplot_kw={"projection": "3d"}
+    #         )
+    #     elif (fig is not None) == (ax3d is None):  # xor
+    #         raise ValueError(
+    #             "Both fig and ax must be provided if providing the figure or the axes"
+    #         )
 
-        fig.set_facecolor(facecolor)
-        ax3d.set_facecolor(facecolor)
-        lat_coord, lon_coord, time_coord, level_coord, _ = get_coord_vars(data)
+    #     fig.set_facecolor(facecolor)
+    #     ax3d.set_facecolor(facecolor)
+    #     lat_coord, lon_coord, time_coord, level_coord, _ = get_coord_vars(data)
 
-        if minn is None and maxx is None:
-            minn, maxx = (
-                data.sel({time_coord: timestamp}).min().values,
-                data.sel({time_coord: timestamp}).max().values,
-            )
-        elif (minn is not None) == (maxx is None):  # xor
-            raise ValueError("Both minn and maxx must be provided if one is provided")
+    #     if minn is None and maxx is None:
+    #         minn, maxx = (
+    #             data.sel({time_coord: timestamp}).min().values,
+    #             data.sel({time_coord: timestamp}).max().values,
+    #         )
+    #     elif (minn is not None) == (maxx is None):  # xor
+    #         raise ValueError("Both minn and maxx must be provided if one is provided")
 
-        if level_coord:
-            for level in data[level_coord].values:
-                z = int(level)
+    #     if level_coord:
+    #         for level in data[level_coord].values:
+    #             z = int(level)
 
-                level_data = data.sel({time_coord: timestamp, level_coord: level})
-                level_data = level_data.where(~level_data.isnull(), drop=True)
+    #             level_data = data.sel({time_coord: timestamp, level_coord: level})
+    #             level_data = level_data.where(~level_data.isnull(), drop=True)
 
-                norm = mpl.colors.Normalize(vmin=minn, vmax=maxx)
-                m = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
-                m.set_array([])
-                fcolors = m.to_rgba(level_data.values)
+    #             norm = mpl.colors.Normalize(vmin=minn, vmax=maxx)
+    #             m = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    #             m.set_array([])
+    #             fcolors = m.to_rgba(level_data.values)
 
-                anomaly = np.abs(level_data.values - level_data.values.mean())
-                anomaly = (anomaly / anomaly.max()) ** 1.5
+    #             anomaly = np.abs(level_data.values - level_data.values.mean())
+    #             anomaly = (anomaly / anomaly.max()) ** 1.5
 
-                fcolors[..., 3] = anomaly
+    #             fcolors[..., 3] = anomaly
 
-                X, Y = np.meshgrid(
-                    level_data[lon_coord].values, level_data[lat_coord].values[::-1]
-                )
+    #             X, Y = np.meshgrid(
+    #                 level_data[lon_coord].values, level_data[lat_coord].values[::-1]
+    #             )
 
-                ax3d.plot_surface(
-                    X,
-                    Y,
-                    np.ones(X.shape) * z,
-                    facecolors=fcolors,
-                    vmin=minn,
-                    vmax=maxx,
-                    shade=False,
-                )
+    #             ax3d.plot_surface(
+    #                 X,
+    #                 Y,
+    #                 np.ones(X.shape) * z,
+    #                 facecolors=fcolors,
+    #                 vmin=minn,
+    #                 vmax=maxx,
+    #                 shade=False,
+    #             )
 
-        ax3d.xaxis.pane.fill = False
-        ax3d.yaxis.pane.fill = False
-        ax3d.zaxis.pane.fill = False
-        ax3d.xaxis.pane.set_edgecolor(facecolor)
-        ax3d.yaxis.pane.set_edgecolor(facecolor)
-        ax3d.zaxis.pane.set_edgecolor(facecolor)
-        ax3d.xaxis.line.set_color(text_color)
-        ax3d.yaxis.line.set_color(text_color)
-        ax3d.zaxis.line.set_color(text_color)
-        ax3d.tick_params(axis="z", colors=text_color, pad=-1, labelsize=6)
-        ax3d.tick_params(
-            axis="x",
-            colors=text_color,
-            pad=-5,
-            labelrotation=view_angles[0],
-            labelsize=6,
-        )
-        ax3d.tick_params(
-            axis="y",
-            colors=text_color,
-            pad=-5,
-            labelrotation=-view_angles[0],
-            labelsize=6,
-        )
-        ax3d.view_init(*view_angles)
-        ax3d.grid(False)
-        if add_colorbar:
-            cbar = fig.colorbar(m, ax=ax3d, orientation="horizontal", pad=0.1)
-            cbar.ax.xaxis.set_tick_params(color=text_color)
-            cbar.set_label(
-                f"{data.attrs['long_name']}, {data.attrs['units']}", color=text_color
-            )
-            plt.setp(
-                plt.getp(cbar.ax.axes, "xticklabels"), color=text_color, fontsize=6
-            )
-        ax3d.invert_zaxis()
-        fig.tight_layout()
-        plt.show()
+    #     ax3d.xaxis.pane.fill = False
+    #     ax3d.yaxis.pane.fill = False
+    #     ax3d.zaxis.pane.fill = False
+    #     ax3d.xaxis.pane.set_edgecolor(facecolor)
+    #     ax3d.yaxis.pane.set_edgecolor(facecolor)
+    #     ax3d.zaxis.pane.set_edgecolor(facecolor)
+    #     ax3d.xaxis.line.set_color(text_color)
+    #     ax3d.yaxis.line.set_color(text_color)
+    #     ax3d.zaxis.line.set_color(text_color)
+    #     ax3d.tick_params(axis="z", colors=text_color, pad=-1, labelsize=6)
+    #     ax3d.tick_params(
+    #         axis="x",
+    #         colors=text_color,
+    #         pad=-5,
+    #         labelrotation=view_angles[0],
+    #         labelsize=6,
+    #     )
+    #     ax3d.tick_params(
+    #         axis="y",
+    #         colors=text_color,
+    #         pad=-5,
+    #         labelrotation=-view_angles[0],
+    #         labelsize=6,
+    #     )
+    #     ax3d.view_init(*view_angles)
+    #     ax3d.grid(False)
+    #     if add_colorbar:
+    #         cbar = fig.colorbar(m, ax=ax3d, orientation="horizontal", pad=0.1)
+    #         cbar.ax.xaxis.set_tick_params(color=text_color)
+    #         cbar.set_label(
+    #             f"{data.attrs['long_name']}, {data.attrs['units']}", color=text_color
+    #         )
+    #         plt.setp(
+    #             plt.getp(cbar.ax.axes, "xticklabels"), color=text_color, fontsize=6
+    #         )
+    #     ax3d.invert_zaxis()
+    #     fig.tight_layout()
+    #     plt.show()

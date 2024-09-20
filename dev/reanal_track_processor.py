@@ -6,8 +6,6 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import numpy as np
 import dask.array as da
-import gc
-import h5py
 
 # Backend Libraries
 import joblib as jl
@@ -33,7 +31,7 @@ parser.add_argument(
     "--season",
     type=int,
     help="The seasons to process",
-    default=2013,
+    default=2020,
 )
 
 args = parser.parse_args()
@@ -96,7 +94,7 @@ for season, storms in seasons.items():
                 ],
                 plevels={"temperature": [850], "geopotential": [500]},
                 masktype="rect",
-                circum_points=30,
+                circum_points=30 * 4,
                 n_jobs=n_jobs,
                 verbose=False,
             )

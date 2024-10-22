@@ -32,19 +32,18 @@ import argparse
 # %%
 if __name__ == "__main__":
     # emulate system arguments
-    emulate = False
+    emulate = True
     # Simulate command line arguments
     if emulate:
         sys.argv = [
             "script_name",  # Traditionally the script name, but it's arbitrary in Jupyter
-            "--ai_model",
-            "fourcastnetv2",
-            "--overwrite_cache",
-            "--min_leadtime",
-            "6",
-            "--max_leadtime",
-            "24",
-            "--use_gpu",
+            # "--ai_model",
+            # "fourcastnetv2",
+            # "--overwrite_cache",
+            # "--min_leadtime",
+            # "6",
+            # "--max_leadtime",
+            # "24",
             "--verbose",
         ]
 
@@ -324,6 +323,8 @@ if __name__ == "__main__":
     #  Training
     lead_times = []
     val_losses = []
+
+    # %%
 
     for lead in unique_leads:
         print(f"Working on Leadtime: {lead}h")

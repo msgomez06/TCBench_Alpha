@@ -804,7 +804,9 @@ class SimpleCNN(nn.Module):
         self.strides = kwargs.get("strides", [1, 1, 1])
         self.paddings = kwargs.get("paddings", [1, 1, 1])
         input_cols = kwargs.get("input_cols", 5)
+        target_size = kwargs.get("target_size", 2)
 
+        self.target_size = target_size
         # Output size = (input_size - kernel_size + 2*padding) / stride + 1
         # after pooling output size = output_size / (pool_size * pool_stride)
         self.size = 241
@@ -850,12 +852,14 @@ class SimpleCNN(nn.Module):
         self.flat_size = int(cnn_widths[2] * self.size * self.size)
         self.fc1 = nn.Linear(self.flat_size, fc_width)
 
+        self.num_outputs = self.target_size * (
+            1 if kwargs.get("deterministic", False) else 2
+        ) + (self.target_size if kwargs.get("aux_loss", False) else 0)
+
         # We will encode the baseline intensity with a dense layer
         self.fc2 = nn.Linear(num_scalars, num_scalars * 8)
         self.fc3 = nn.Linear(num_scalars * 8, num_scalars * 8)
-        self.fc4 = nn.Linear(
-            fc_width + num_scalars * 8, 2 if kwargs.get("deterministic", False) else 4
-        )
+        self.fc4 = nn.Linear(fc_width + num_scalars * 8, self.num_outputs)
 
     def forward(self, x, scalars):
         x = self.pool(F.relu(self.conv1(x)))

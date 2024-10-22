@@ -241,7 +241,7 @@ def ll_gridder(**kwargs):
 
     return lats, lons
 
-
+#%%
 # Great circle distance calculations
 def haversine(latp, lonp, lat_list, lon_list, **kwargs):
     """──────────────────────────────────────────────────────────────────────────┐
@@ -286,7 +286,47 @@ def haversine(latp, lonp, lat_list, lon_list, **kwargs):
     a = np.where(np.sqrt(a) <= 1, a, np.sign(a))
 
     return 2 * 6371 * np.arcsin(np.sqrt(a))
+#%%
 
+def list_to_list_haversine(point_list1, point_list2, **kwargs):
+    """
+    For two list of points (including lat/lon pairs, and lists of equal size),
+    calculate the great circle distance between each pair of points in the two lists.
+
+    Inputs:
+
+    point_list1 - list of lat/lon pairs (lat1, lon1), (lat2, lon2) ... (latn, lonn)
+
+    point_list2 - list of lat/lon pairs (lat1, lon1), (lat2, lon2) ... (latn, lonn)
+
+    Outputs:
+
+    distance - list of distances between each pair of points in the two lists (dist1,
+               dist2, ... distn) in kilometers.
+
+    """
+
+    lat1 = np.radians(point_list1[:, 0])[:, None]
+    lon1 = np.radians(point_list1[:, 1])[:, None]
+    lat2 = np.radians(point_list2[:, 0])[:, None]
+    lon2 = np.radians(point_list2[:, 1])[:, None]
+
+    dlon = lon1 - lon2
+    dlat = lat1 - lat2
+    a = np.power(np.sin(dlat / 2), 2) + np.cos(lat2) * np.cos(lat1) * np.power(
+        np.sin(dlon / 2), 2
+    )
+
+
+    # Assert that sqrt(a) is within machine precision of 1
+    # assert np.all(np.sqrt(a) <= 1 + epsilon), 'Invalid argument for arcsin'
+
+    # Check if square root of a is a valid argument for arcsin within machine precision
+    # If not, set to 1 or -1 depending on sign of a
+    a = np.where(np.sqrt(a) <= 1, a, np.sign(a))
+
+    return 2 * 6371 * np.arcsin(np.sqrt(a))
+#%%
 
 def get_coord_vars(dataset):
     lon_coord = lat_coord = time_coord = level_coord = leadtime_coord = False
@@ -1026,6 +1066,28 @@ def get_ai_sets(splits: dict, **kwargs):
     return sets, data
 
 
+def analyze_displacement_hist(storm_set, leadtime, **kwargs):
+    global_distance = None
+    global_dlon = None
+    global_dlat = None
+    for season, storms in storm_set.items():
+        for storm in storms:
+            distance, dlon, dlat = storm.historical_displacement(
+                leadtime=leadtime, **kwargs
+            )
+            # print(distance.shape, dlon.shape, dlat.shape)
+            if global_distance is None and len(distance) > 0:
+                global_distance = distance
+                global_dlon = dlon
+                global_dlat = dlat
+            elif len(distance) > 0:
+                global_distance = np.vstack((global_distance, distance))
+                global_dlon = np.vstack((global_dlon, dlon))
+                global_dlat = np.vstack((global_dlat, dlat))
+
+    return global_distance, global_dlon, global_dlat
+
+
 def get_reanal_sets(splits: dict, **kwargs):
     """
     Function to retrieve the training, validation, and testing set for TC tracks.
@@ -1759,7 +1821,6 @@ class tc_track:
 
         return mask
 
-    # @profile
     def process_data_collection(self, data_collection, **kwargs):
         # Function to add all variables from a data collection object
         # to the track object
@@ -2575,6 +2636,64 @@ class tc_track:
         gt_array = gt_array[~np.any(gt_array == "", axis=1)].astype(float)
 
         return gt_array, timestamps
+
+    def historical_displacement(self, **kwargs):
+        """
+        Function to calculate the historical displacement of a storm
+        for a given leadtime.
+
+        Parameters
+        ----------
+        leadtime : int, required
+            Leadtime in hours for which to calculate the historical displacement
+            of the storm.
+
+        Returns
+        -------
+        historical_displacement : np.ndarray
+            Array containing the historical displacement of the storm
+            for the given leadtime, in 100s of kilometers.
+        lat_delta : np.ndarray
+            Array containing the latitude delta of the storm
+            for the given leadtime.
+        lon_delta : np.ndarray
+            Array containing the longitude delta of the storm
+            for the given leadtime.
+
+        """
+
+        # Get the ground truth data
+        positions, timestamps = self.get_ground_truth(ground_truth=["track"], **kwargs)
+        timestamps = pd.to_datetime(timestamps)
+
+        # Get the leadtime
+        leadtime = kwargs.get("leadtime", 24)
+        assert isinstance(
+            leadtime, int
+        ), f"Invalid leadtime type {type(leadtime)}. Expected int"
+
+        # Filter out non-6-hourly timestamps
+        valid_timestamps = timestamps[timestamps.hour.isin([0, 6, 12, 18])]
+
+        target_timestamps = valid_timestamps + np.timedelta64(leadtime, "h")
+
+        # Get the indices of the target timestamps that are valid
+        valid_indices = np.where(np.isin(target_timestamps, timestamps))[0]
+
+        # Get the initial/end timestamps that have a valid index associated with them
+        initial_timestamps = valid_timestamps[valid_indices]
+        end_timestamps = target_timestamps[valid_indices]
+
+        # Get the initial/end positions
+        initial_positions = positions[np.isin(timestamps, initial_timestamps)]
+        end_positions = positions[np.isin(timestamps, end_timestamps)]
+
+        distances = list_to_list_haversine(initial_positions, end_positions)
+
+        lat_delta = np.abs(end_positions[:, 0] - initial_positions[:, 0])[:, None]
+        lon_delta = np.abs(end_positions[:, 1] - initial_positions[:, 1])[:, None]
+
+        return distances / 100, lat_delta, lon_delta
 
     def plot_track(self, **kwargs):
         """

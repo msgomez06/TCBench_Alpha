@@ -166,6 +166,12 @@ if __name__ == "__main__":
         help="Path to the saved model to load",
     )
 
+    parser.add_argument(
+        "--aux_loss",
+        action="store_true",
+        help="Whether an auxiliary loss was used during training",
+    )
+
     args = parser.parse_args()
 
     print("Imports successful", flush=True)

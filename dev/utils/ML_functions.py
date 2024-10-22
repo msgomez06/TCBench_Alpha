@@ -21,6 +21,7 @@ import warnings
 import xarray as xr
 from dask import optimize
 import dask.array as da
+import zarr as zr
 
 # %% Classes
 ## TODO: Add docstrings, add type hints, add error handling
@@ -54,7 +55,7 @@ class DaskDataset(Dataset):
             AI_X.shape[0] == base_int.shape[0]
         ), "AI_X and base_int should have the same length"
 
-        self.AI_X = AI_X
+        # self.AI_X = AI_X
         self.AI_scaler = AI_scaler
         self.base_int = base_int
         self.base_scaler = base_scaler
@@ -74,7 +75,8 @@ class DaskDataset(Dataset):
 
         # Scale the data using the scaler using dask.delayed.ravel
         interim = (
-            self.AI_X.rechunk((self.chunk_size, self.AI_X.shape[1], 241, 241))
+            # self.AI_X.rechunk((self.chunk_size, self.AI_X.shape[1], 241, 241))
+            AI_X.rechunk((self.chunk_size, AI_X.shape[1], 241, 241))
             .to_delayed()
             .ravel()
         )
@@ -82,16 +84,19 @@ class DaskDataset(Dataset):
             da.from_delayed(
                 self.AI_scaler.transform(block),
                 shape=(
-                    min(self.chunk_size, self.AI_X.shape[0] - i * self.chunk_size),
-                    self.AI_X.shape[1],
+                    # min(self.chunk_size, self.AI_X.shape[0] - i * self.chunk_size),
+                    min(self.chunk_size, AI_X.shape[0] - i * self.chunk_size),
+                    AI_X.shape[1],
                     241,
                     241,
                 ),
-                dtype=self.AI_X.dtype,
+                # dtype=self.AI_X.dtype,
+                dtype=np.float32,
             )
             for i, block in enumerate(interim)
         ]
-        self.AI_X = da.concatenate(interim)
+        # self.AI_X = da.concatenate(interim)
+        AI_X = da.concatenate(interim)
 
         # self.AI_X = da.map_blocks(
         #     self.AI_scaler.transform, self.AI_X, dtype=np.float32, chunks=self.AI_X.chunksize)
@@ -103,10 +108,12 @@ class DaskDataset(Dataset):
         ).compute()
 
         if "track" in kwargs:
-            self.scalars = np.hstack([self.scalars, kwargs["track"]])
+            self.scalars = np.hstack([self.scalars, kwargs["track"]]).astype(np.float32)
 
         if "leadtimes" in kwargs:
-            self.scalars = np.hstack([self.scalars, kwargs["leadtimes"]])
+            self.scalars = np.hstack([self.scalars, kwargs["leadtimes"]]).astype(
+                np.float32
+            )
 
         self.num_scalars = self.scalars.shape[1]
 
@@ -118,7 +125,8 @@ class DaskDataset(Dataset):
         ).compute()
 
         if kwargs.get("load_into_memory", False):
-            self.AI_X = self.AI_X.compute()
+            # self.AI_X = self.AI_X.compute()
+            self.AI_X = AI_X.compute()
         else:
             zarr_name = kwargs.get("zarr_name", "unnamed")
             cachedir = kwargs.get("cachedir", os.path.join(os.getcwd(), "cache"))
@@ -130,16 +138,20 @@ class DaskDataset(Dataset):
             # save AI_X to zarr
             AI_X_path = os.path.join(zarr_path, "AI_X")
             if not os.path.exists(AI_X_path):
-                self.AI_X.rechunk(
-                    (self.chunk_size, self.AI_X.shape[1], 241, 241)
+                # self.AI_X.rechunk(
+                AI_X.rechunk(
+                    # (self.chunk_size, self.AI_X.shape[1], 241, 241)
+                    (self.chunk_size, AI_X.shape[1], 241, 241)
                 ).to_zarr(AI_X_path)
                 # self.AI_X.to_zarr(AI_X_path)
             elif kwargs.get("overwrite", True):
                 # overwrite
-                self.AI_X.to_zarr(AI_X_path, overwrite=True)
+                # self.AI_X.to_zarr(AI_X_path, overwrite=True)
+                AI_X.to_zarr(AI_X_path, overwrite=True)
 
             # load AI_X from zarr
-            self.AI_X = da.from_zarr(AI_X_path)
+            # self.AI_X = da.from_zarr(AI_X_path)
+            self.AI_X = zr.open(AI_X_path, dtype=np.float32)
 
         self.device = kwargs.get(
             "device",
@@ -162,14 +174,68 @@ class DaskDataset(Dataset):
         output = []
         for array in sample:
             if isinstance(array, np.ndarray):
-                array = torch.from_numpy(array.astype(np.float32)).to(self.device)
+                array = torch.from_numpy(array.astype(np.float32)).to("cpu")
                 output.append(array)
             elif isinstance(array, da.Array):
-                array = torch.from_numpy(array.compute().astype(np.float32)).to(
-                    self.device
-                )
+                array = torch.from_numpy(array.compute().astype(np.float32)).to("cpu")
+                output.append(array)
+            elif isinstance(array, zr.core.Array):
+                array = torch.from_numpy(array[:].astype(np.float32)).to("cpu")
+                output.append(array)
+            else:
                 output.append(array)
         return (*output,)
+        # return sample
+
+
+# %%
+
+
+class ZarrDataset(Dataset):
+    def __init__(self, AI_X, base_int, target_data, **kwargs):
+        # Assert that AI_X and base_int have the same length
+        assert (
+            AI_X.shape[0] == base_int.shape[0]
+        ), "AI_X and base_int should have the same length"
+
+        self.AI_X = AI_X[:]
+        self.base_int = base_int
+        self.target_data = target_data
+        self.chunk_size = kwargs.get("chunk_size", 1000)
+        self.scalars = base_int
+        if "track" in kwargs:
+            self.scalars = da.hstack([self.scalars, kwargs["track"]]).astype(np.float32)
+
+        if "leadtimes" in kwargs:
+            self.scalars = da.hstack([self.scalars, kwargs["leadtimes"]]).astype(
+                np.float32
+            )
+        self.scalars = self.scalars.compute()
+        self.num_scalars = self.scalars.shape[1]
+
+        self.device = kwargs.get(
+            "device",
+            torch.device("cuda") if torch.cuda.is_available else torch.device("cpu"),
+        )
+
+    def __len__(self):
+        return len(self.base_int)
+
+    def __getitem__(self, idx):
+        # Load the specific data points needed for this index
+        AI_sample = self.AI_X[idx]
+        scalar_sample = self.scalars[idx]
+        target_sample = self.target_data[idx]
+        if scalar_sample.ndim == 1:
+            scalar_sample = scalar_sample[None, :]
+
+        sample = (
+            torch.tensor(AI_sample, dtype=torch.float32),
+            torch.tensor(scalar_sample, dtype=torch.float32),
+            torch.tensor(target_sample, dtype=torch.float32),
+        )
+
+        return sample
 
 
 # %% Functions

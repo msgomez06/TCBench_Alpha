@@ -1,0 +1,10 @@
+# Ensure line endings are handled correctly between Windows and Unix systems
+* text=auto
+
+# Handle case-sensitive files on Windows (Windows is case-insensitive by default)
+# Treat paths in a case-insensitive manner for Git
+*.txt text eol=lf
+
+# Windows OS file path length limit fix (by disabling file name normalization)
+core.longpaths true
+

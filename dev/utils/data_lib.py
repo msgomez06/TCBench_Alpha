@@ -70,9 +70,9 @@ class Data_Collection:
         self.file_type = file_type
 
         # Initialize the data collection object
-        self._init_data_collection()
+        self._init_data_collection(**kwargs)
 
-    def _init_data_collection(self):
+    def _init_data_collection(self, **kwargs):
         dir_contents = os.listdir(self.data_path)
 
         for var_type in self.var_types:
@@ -81,9 +81,9 @@ class Data_Collection:
             ), f"The variable folder {var_type} is not present in the data storage directory."
 
             # Check what variables are available for each variable type
-            self._check_vars(var_type)
+            self._check_vars(var_type, **kwargs)
 
-    def _check_vars(self, var_type: str):
+    def _check_vars(self, var_type: str, **kwargs):
         # Check what variables are available for each variable type
         var_path = os.path.join(self.data_path, var_type)
 
@@ -103,12 +103,21 @@ class Data_Collection:
             folder_path = os.path.join(var_path, var)
             file_list = sorted(os.listdir(folder_path))
 
+            # remove txt files from the list
+            file_list = [
+                file for file in file_list if file.split(".")[-1] == self.file_type
+            ]
+
             avail_years = []
             # Assert that all files are nc files and add the years to the list
             for file in file_list:
-                assert (
-                    file.split(".")[-1] == self.file_type
-                ), f"{file} in {folder_path} is not a(n) {self.file_type} file"
+                # if kwargs.get("strict", True):
+                #     assert (
+                #         file.split(".")[-1] == self.file_type
+                #     ), f"{file} in {folder_path} is not a(n) {self.file_type} file"
+                # assert (
+                #     file.split(".")[-1] == self.file_type
+                # ), f"{file} in {folder_path} is not a(n) {self.file_type} file"
 
                 year = file.split(".")[0].split("_")[1][:4]
                 if year not in avail_years:
@@ -826,9 +835,9 @@ class AI_Data_Collection:
         self.ai_model = data_path.split("/")[-1]
 
         # Initialize the data collection object
-        self._init_data_collection()
+        self._init_data_collection(**kwargs)
 
-    def _init_data_collection(self):
+    def _init_data_collection(self, **kwargs):
         dir_contents = os.listdir(self.data_path)
         # Create the dictionary that will hold the list of filenames within each year
         # subdirectory

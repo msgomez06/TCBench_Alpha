@@ -6,8 +6,6 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import numpy as np
 import dask.array as da
-import gc
-import h5py
 
 # Backend Libraries
 import joblib as jl
@@ -23,7 +21,7 @@ if emulate:
     sys.argv = [
         "reanal_track_processor.py",
         "--season",
-        "2016",
+        "2020",
     ]
 
 
@@ -33,7 +31,7 @@ parser.add_argument(
     "--season",
     type=int,
     help="The seasons to process",
-    default=2013,
+    default=2007,
 )
 
 args = parser.parse_args()
@@ -41,7 +39,7 @@ args = parser.parse_args()
 # %%
 seasons = toolbox.get_TC_seasons(
     season_list=[args.season],
-    datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+    datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/ilia/",
 )
 # seasons = toolbox.get_TC_seasons(
 #     season_list=[*range(2018, 2019)],
@@ -96,7 +94,7 @@ for season, storms in seasons.items():
                 ],
                 plevels={"temperature": [850], "geopotential": [500]},
                 masktype="rect",
-                circum_points=30,
+                circum_points=5 * 4,
                 n_jobs=n_jobs,
                 verbose=False,
             )

@@ -29,6 +29,12 @@ import metrics, baselines
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error
 import argparse
 
+
+# Function to Normalize the data and targets
+def transform_data(data, scaler):
+    return scaler.transform(data)
+
+
 # %%
 if __name__ == "__main__":
     # emulate system arguments
@@ -37,18 +43,20 @@ if __name__ == "__main__":
     if emulate:
         sys.argv = [
             "script_name",  # Traditionally the script name, but it's arbitrary in Jupyter
-            "--ai_model",
-            "fourcastnetv2",
-            "--overwrite_cache",
+            # "--ai_model",
+            # "fourcastnetv2",
+            # "--overwrite_cache",
             # "--min_leadtime",
             # "6",
             # "--max_leadtime",
             # "24",
             # "--use_gpu",
-            "--verbose",
+            # "--verbose",
+            # "--reanalysis",
             "--cache_dir",
             "/scratch/mgomezd1/cache",
             "--mask",
+            "--magAngle_mode",
         ]
     # %%
     # check if the context has been set for torch multiprocessing
@@ -197,6 +205,13 @@ if __name__ == "__main__":
         help="Whether to use an auxiliary loss",
     )
 
+    parser.add_argument(
+        "--saved_model",
+        type=str,
+        default=None,
+        help="Path to the saved model to load",
+    )
+
     args = parser.parse_args()
 
     print("Imports successful", flush=True)
@@ -218,272 +233,143 @@ if __name__ == "__main__":
 
     num_cores = int(subprocess.check_output(["nproc"], text=True).strip())
 
-    #  Data Loading
-    rng = np.random.default_rng(seed=2020)
-
-    years = list(range(2013, 2020))
-    rng.shuffle(years)
-
-    # Make the cache directory if it doesn't exist
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-
-    if args.reanalysis:
-        sets, data = toolbox.get_reanal_sets(
-            {
-                "train": years[:-2],
-                "validation": years[-2:],
-                # "test": [2020],
-            },
-            datadir=datadir,
-            test_strategy="custom",
-            base_position=True,
-            cache_dir=cache_dir,
-            # use_cached=not args.overwrite_cache,
-            verbose=args.verbose,
-            debug=args.debug,
-        )
-    else:
-        print("Loading datasets...", flush=True)
-        sets, data = toolbox.get_ai_sets(
-            {
-                "train": years[:-2],
-                "validation": years[-2:],
-                # "test": [2020],
-            },
-            datadir=datadir,
-            test_strategy="custom",
-            base_position=True,
-            ai_model=args.ai_model,
-            cache_dir=cache_dir,
-            # use_cached=not args.overwrite_cache,
-            verbose=args.verbose,
-            debug=args.debug,
+    # Check if the cache directory includes a zarray store for the data
+    try:
+        zarr_path = os.path.join(cache_dir, "zarray_store")
+        zarr_store = zr.DirectoryStore(zarr_path)
+    except FileNotFoundError:
+        raise (
+            "Zarray Cache directory not found. Evaluation requires that the data be cached. Please run the data preparation script first."
         )
 
-    # %%
-    # create a mask for the leadtimes
-    train_ldt_mask = da.logical_and(
-        data["train"]["leadtime"] >= args.min_leadtime,
-        data["train"]["leadtime"] <= args.max_leadtime,
-    )
-    train_ldt_mask = np.squeeze(train_ldt_mask.compute(scheduler="threads"))
+    root = zr.open_group(zarr_path)
 
-    validation_ldt_mask = da.logical_and(
-        data["validation"]["leadtime"] >= args.min_leadtime,
-        data["validation"]["leadtime"] <= args.max_leadtime,
-    )
-    validation_ldt_mask = np.squeeze(validation_ldt_mask.compute(scheduler="threads"))
+    # Check that the validation group exists
+    assert (
+        "validation" in root
+    ), "Validation group not found in cache directory. Evaluation is run on the validation set."
 
-    #  Preprocessing
-
-    # Let's filter the data using leadtimes
-    print("Filtering data...", flush=True)
-    train_data = data["train"]["inputs"][train_ldt_mask]
-    valid_data = data["validation"]["inputs"][validation_ldt_mask]
-    # and the columns to ablate
-    ablate_cols = json.loads(args.ablate_cols)
-
-    if len(ablate_cols) > 0:
-        train_data = train_data[
-            :,
-            [i for i in range(train_data.shape[1]) if i not in ablate_cols],
-            :,
-            :,
-        ]
-        valid_data = valid_data[
-            :,
-            [i for i in range(valid_data.shape[1]) if i not in ablate_cols],
-            :,
-            :,
-        ]
-
-    if args.magAngle_mode:
-        train_data = mlf.uv_to_magAngle(train_data, u_idx=0, v_idx=1)
-        valid_data = mlf.uv_to_magAngle(valid_data, u_idx=0, v_idx=1)
-
-    # We will want to normalize the inputs for the model
-    # to work properly. We will use the AI_StandardScaler for this
-    # purpose
-    AI_scaler = None
-    from_cache = not args.overwrite_cache
-    fpath = os.path.join(cache_dir, "AI_scaler.pkl")
-
-    if from_cache:
-        if os.path.exists(fpath):
-            print("Loading AI scaler from cache...", flush=True)
-            with open(fpath, "rb") as f:
-                AI_scaler = pickle.load(f)
-
-    if AI_scaler is None:
-        print("Fitting AI datascaler...", flush=True)
-        # AI_data = optimize(AI_data)[0]
-        AI_scaler = mlf.AI_StandardScaler()
-        AI_scaler.fit(train_data, num_workers=num_cores)
-
-        # save the scaler to the cache
-        with open(fpath, "wb") as f:
-            pickle.dump(AI_scaler, f)
-
-    # We also want to do the same for the base intensity
-    base_scaler = None
-    from_cache = not args.overwrite_cache
-    fpath = os.path.join(cache_dir, "base_scaler.pkl")
-
-    if from_cache:
-        if os.path.exists(fpath):
-            print("Loading base scaler from cache...", flush=True)
-            with open(fpath, "rb") as f:
-                base_scaler = pickle.load(f)
-
-    if base_scaler is None:
-        print("Fitting base intensity scaler...", flush=True)
-        base_scaler = StandardScaler()
-        base_scaler.fit(data["train"]["base_intensity"][train_ldt_mask])
-
-        # save the scaler to the cache
-        with open(fpath, "wb") as f:
-            pickle.dump(base_scaler, f)
-
-    # and one for the base position
-    print("Encoding base position...", flush=True)
-    train_positions = mlf.latlon_to_sincos(
-        data["train"]["base_position"][train_ldt_mask]
-    ).compute()
-    valid_positions = mlf.latlon_to_sincos(
-        data["validation"]["base_position"][validation_ldt_mask]
-    ).compute()
-
-    # We'll encode the leadtime by dividing it by the max leadtime in the dataset
-    # which is 168 hours
-    print("Encoding leadtime...", flush=True)
-    max_train_ldt = data["train"]["leadtime"][train_ldt_mask].max().compute()
-    train_leadtimes = (
-        data["train"]["leadtime"][train_ldt_mask] / max_train_ldt
-    ).compute(scheduler="threads")
-    validation_leadtimes = (
-        data["validation"]["leadtime"][validation_ldt_mask] / max_train_ldt
-    ).compute(schedule="threads")
-
-    if args.raw_target:
-        train_target = data["train"]["outputs"][train_ldt_mask]
-        valid_target = data["validation"]["outputs"][validation_ldt_mask]
-    else:
-        # We also want to precalculate the delta intensity for the
-        # training and validation sets
-        print("Calculating target (i.e., delta intensities)...", flush=True)
-        train_target = (
-            data["train"]["outputs"][train_ldt_mask]
-            - data["train"]["base_intensity"][train_ldt_mask]
-        )
-        valid_target = (
-            data["validation"]["outputs"][validation_ldt_mask]
-            - data["validation"]["base_intensity"][validation_ldt_mask]
-        )
-
-    # Save the training and validation inputs as zarrays in the cache
-    train_data.rechunk((1000, -1, -1, -1)).to_zarr(
-        os.path.join(cache_dir, "train_data.zarr"), overwrite=args.overwrite_cache
-    )
-    valid_data.rechunk((1000, -1, -1, -1)).to_zarr(
-        os.path.join(cache_dir, "valid_data.zarr"), overwrite=args.overwrite_cache
-    )
-
-    train_zarr = zr.open(
-        os.path.join(cache_dir, "train_data.zarr"), mode="a", chunks=(1000, -1, -1, -1)
-    )
-    valid_zarr = zr.open(
-        os.path.join(cache_dir, "valid_data.zarr"), mode="a", chunks=(1000, -1, -1, -1)
-    )
-    # %%
-    # Loading the mask to apply that depends on the leadtime
+    # Check that the validationmask exists if --mask is True
     if args.mask:
-        mask_path = args.mask_path
-        with open(mask_path, "rb") as f:
-            mask_dict = pickle.load(f)[args.mask_type]
+        assert (
+            "validation/mask" in root
+        ), "Validation mask not found in cache directory. Please run the data preparation script with --mask True."
 
-        print("Applying radial mask...", flush=True)
-        unique_leads = da.unique(data["train"]["leadtime"]).compute()
+    # Check that the validation leadtime group exists
+    assert (
+        "validation/leadtime" in root
+    ), "Validation leadtime group not found in cache directory. Evaluation is run on the validation set."
 
-        train_mask = da.ones((train_data.shape[0], 241, 241), chunks=(1000, -1, -1))
-        valid_mask = da.ones((valid_data.shape[0], 241, 241), chunks=(1000, -1, -1))
+    # Load the data from the zarr store
+    train_target = zr.open(zarr_store, mode="r")["train/target_scaled"]
+    valid_target = zr.open(zarr_store, mode="r")["validation/target_scaled"]
+    leadtimes = zr.open(zarr_store, mode="r")["train/leadtime"]
 
-        for lead in unique_leads:
-            radial_mask = mask_dict[lead]
+    unique_leads = np.unique(leadtimes)
 
-            temp_ldt_mask_train = (
-                (data["train"]["leadtime"] == lead).compute().squeeze()
-            )
-            temp_ldt_mask_valid = (
-                (data["validation"]["leadtime"] == lead).compute().squeeze()
-            )
+    #  Model
+    # Load the saved model
+    model_path = os.path.join(result_dir, args.saved_model)
+    MLR = torch.load(model_path)
 
-            train_mask[temp_ldt_mask_train] = (
-                train_mask[temp_ldt_mask_train] * radial_mask
-            )
-            valid_mask[temp_ldt_mask_valid] = (
-                valid_mask[temp_ldt_mask_valid] * radial_mask
-            )
+    #  Training
+    lead_times = []
+    val_losses = []
 
-        train_mask = train_mask.rechunk((1000, -1, -1))
-        valid_mask = valid_mask.rechunk((1000, -1, -1))
+    for lead in unique_leads:
+        print(f"Working on Leadtime: {lead}h")
 
-        # Define the lambda function to apply the mask
-        apply_mask = lambda chunk, mask: chunk * mask
+        lead_times.append(lead)
 
-        # # Apply the mask to each chunk
-        # train_data_processed = da.map_blocks(apply_mask, train_data, train_mask)
-        # valid_data_processed = da.map_blocks(apply_mask, valid_data, valid_mask)
+        temp_mask = data["validation"]["leadtime"] == lead
+        temp_mask = np.squeeze(temp_mask.compute())
 
-        print("Starting radial mask on-disk compute...")
-        da.map_blocks(apply_mask, train_data, train_mask).compute(schedule="threads")
-        da.map_blocks(apply_mask, valid_data, valid_mask).compute(schedule="threads")
+        # We then instantiate the DaskDataset class for the training and validation sets.
+        # Validation first because it's smaller and will be used to evaluate if the code
+        # is working as expected
+        print("Creating validation DaskDataset and dataloader...", flush=True)
+        validation_dataset = mlf.DaskDataset(
+            AI_X=valid_data[temp_mask],
+            AI_scaler=AI_scaler,
+            base_int=data["validation"]["base_intensity"][validation_ldt_mask][
+                temp_mask
+            ],
+            base_scaler=base_scaler,
+            target_data=valid_target[temp_mask],
+            target_scaler=target_scaler,
+            device=calc_device,
+            cachedir=cache_dir,
+            zarr_name=f"val_{lead}h",
+            overwrite=args.overwrite_cache,
+            num_workers=num_cores,
+            track=valid_positions[temp_mask],
+            leadtimes=validation_leadtimes[temp_mask],
+            chunk_size=512,
+            # load_into_memory=True,
+        )
 
-        # train_zarr[temp_ldt_mask_train] = (
-        #     train_data[temp_ldt_mask_train] * radial_mask
-        # ).compute(scheduler="threads")
-        # train_zarr[temp_ldt_mask_valid] = (
-        #     valid_data[temp_ldt_mask_valid] * radial_mask
-        # ).compute(scheduler="threads")
+        validation_loader = mlf.make_dataloader(
+            validation_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+        )
 
-        # train_shape = train_data[data["train"]["leadtime"][train_ldt_mask] == lead]
+        val_loss = 0
+        with torch.no_grad():
+            i = 0
+            for AI_X, scalars, target in validation_loader:
+                i += 1
+                prediction = MLR(x=AI_X, scalars=scalars)
+                batch_loss = loss_func(prediction, target)
 
-        # .shape()
-        # valid_shape = valid_data[data["validation"]["leadtime"] == lead].shape()
+                val_loss += batch_loss.item()
 
-        # train_data[data["train"]["leadtime"] == lead] = train_data[
-        #     data["train"]["leadtime"] == lead
-        # ] * da.tile(radial_mask, (train_shape[0], train_shape[1], 1, 1))
-        # valid_data[data["validation"]["leadtime"] == lead] = valid_data[
-        #     data["validation"]["leadtime"] == lead
-        # ] * da.tile(radial_mask, (valid_shape[0], valid_shape[1], 1, 1))
-        print("Radial mask applied", flush=True)
-        train_data = da.from_zarr(train_zarr)
-        valid_data = da.from_zarr(valid_zarr)
-    # And scale the target data using the cached scaler if available
-    target_scaler = None
-    from_cache = not args.overwrite_cache
-    fpath = os.path.join(cache_dir, "target_scaler.pkl")
+                # print a simple progress bar that shows a dot for each percent of the batch
+                print(
+                    "\r"
+                    + f"Batch val loss: {val_loss:.4f}, "
+                    + f"{i}/{len(validation_loader)}"
+                    + "." * int(20 * i / len(validation_loader)),
+                    end="",
+                    flush=True,
+                )
 
-    if from_cache:
-        if os.path.exists(fpath):
-            print("Loading target scaler from cache...", flush=True)
-            with open(fpath, "rb") as f:
-                target_scaler = pickle.load(f)
+        val_loss = val_loss / len(validation_loader)
+        val_losses.append(val_loss)
 
-    if target_scaler is None:
-        print("Fitting target scaler...", flush=True)
-        target_scaler = StandardScaler()
-        target_scaler.fit(train_target)
+        print(
+            f"\nLead: {lead},",
+            f"val_loss: {val_loss},",
+            flush=True,
+            sep=" ",
+        )
 
-        # save the scaler to the cache
-        with open(fpath, "wb") as f:
-            pickle.dump(target_scaler, f)
+    #  Save the results
+    print("Saving results...", flush=True)
+    results = {
+        "lead_times": lead_times,
+        "val_losses": val_losses,
+    }
+
+    with open(os.path.join(result_dir, "eval_results.pkl"), "wb") as f:
+        pickle.dump(results, f)
+
+    print("Done!", flush=True)
+
+    #  Plotting
+    print("Plotting...", flush=True)
+    fig, ax = plt.subplots()
+    ax.plot(lead_times, val_losses)
+    ax.set_xlabel("Leadtime (h)")
+    ax.set_ylabel("Validation Loss")
+    ax.set_title("Validation Loss vs. Leadtime")
+    fig.savefig(os.path.join(result_dir, "eval_results.png"))
 
     #  Dataloader & Hyperparameters
 
     # Let's define some hyperparameters
-    batch_size = 32
+    batch_size = 128
 
     # If the mode is not deterministic, we'll set the loss to CRPS
     if args.mode != "deterministic":
@@ -506,53 +392,39 @@ if __name__ == "__main__":
     # Validation first because it's smaller and will be used to evaluate if the code
     # is working as expected
     print("Creating validation DaskDataset and dataloader...", flush=True)
-    validation_dataset = mlf.DaskDataset(
+    validation_dataset = mlf.ZarrDataset(
         AI_X=valid_data,
-        AI_scaler=AI_scaler,
-        base_int=data["validation"]["base_intensity"][validation_ldt_mask],
-        base_scaler=base_scaler,
+        base_int=valid_base_intensity,
         target_data=valid_target,
-        target_scaler=target_scaler,
         device=calc_device,
-        cachedir=cache_dir,
-        zarr_name="validation",
-        overwrite=args.overwrite_cache,
         num_workers=num_cores,
-        track=valid_positions,
+        track=valid_base_position,
         leadtimes=validation_leadtimes,
-        # load_into_memory=True,
     )
 
     validation_loader = mlf.make_dataloader(
         validation_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=3,
         pin_memory=True,
     )
 
     print("Creating training DaskDataset and dataloader...", flush=True)
-    train_dataset = mlf.DaskDataset(
+    train_dataset = mlf.ZarrDataset(
         AI_X=train_data,
-        AI_scaler=AI_scaler,
-        base_int=data["train"]["base_intensity"][train_ldt_mask],
-        base_scaler=base_scaler,
+        base_int=train_base_intensity,
         target_data=train_target,
-        target_scaler=target_scaler,
         device=calc_device,
-        cachedir=cache_dir,
-        zarr_name="training",
-        overwrite=args.overwrite_cache,
-        num_workers=num_cores,
-        track=train_positions,
+        num_workers=num_workers,
+        track=train_base_position,
         leadtimes=train_leadtimes,
-        # load_into_memory=True,
     )
     train_loader = mlf.make_dataloader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
+        num_workers=3,
         pin_memory=True,
     )
 
@@ -617,9 +489,9 @@ if __name__ == "__main__":
             #     scalars=batch_scalars,
             # )
             # print(AI_X.device, scalars.device)
-            AI_X = AI_X.to(calc_device, non_blocking=True)
-            scalars = scalars.to(calc_device, non_blocking=True)
-            target = target.to(calc_device, non_blocking=True)
+            AI_X = AI_X.to(calc_device)
+            scalars = scalars.to(calc_device)
+            target = target.to(calc_device)
             # print(AI_X.device, scalars.device)
 
             prediction = CNN(x=AI_X, scalars=scalars)
@@ -681,11 +553,11 @@ if __name__ == "__main__":
         i = 0
         with torch.no_grad():
             for AI_X, scalars, target in validation_loader:
-                print(
-                    f"\r {AI_X.dtype} {scalars.dtype} {target.dtype}",
-                    end="",
-                    flush=True,
-                )
+                # print(
+                #     f"\r {AI_X.dtype} {scalars.dtype} {target.dtype}",
+                #     end="",
+                #     flush=True,
+                # )
                 i += 1
                 # batch_data = AI_X.to(calc_device)
                 # batch_scalars = scalars.to(calc_device)
@@ -694,9 +566,9 @@ if __name__ == "__main__":
                 #     scalars=batch_scalars,
                 # )
 
-                AI_X = AI_X.to(calc_device, non_blocking=True)
-                scalars = scalars.to(calc_device, non_blocking=True)
-                target = target.to(calc_device, non_blocking=True)
+                AI_X = AI_X.to(calc_device)
+                scalars = scalars.to(calc_device)
+                target = target.to(calc_device)
                 prediction = CNN(x=AI_X, scalars=scalars)
 
                 if args.aux_loss:

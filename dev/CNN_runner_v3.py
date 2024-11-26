@@ -29,6 +29,12 @@ import metrics, baselines
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error
 import argparse
 
+
+# Function to Normalize the data and targets
+def transform_data(data, scaler):
+    return scaler.transform(data)
+
+
 # %%
 if __name__ == "__main__":
     # emulate system arguments
@@ -37,18 +43,20 @@ if __name__ == "__main__":
     if emulate:
         sys.argv = [
             "script_name",  # Traditionally the script name, but it's arbitrary in Jupyter
-            "--ai_model",
-            "fourcastnetv2",
-            "--overwrite_cache",
+            # "--ai_model",
+            # "fourcastnetv2",
+            # "--overwrite_cache",
             # "--min_leadtime",
             # "6",
             # "--max_leadtime",
             # "24",
             # "--use_gpu",
-            "--verbose",
+            # "--verbose",
+            # "--reanalysis",
             "--cache_dir",
             "/scratch/mgomezd1/cache",
             "--mask",
+            "--magAngle_mode",
         ]
     # %%
     # check if the context has been set for torch multiprocessing
@@ -261,7 +269,6 @@ if __name__ == "__main__":
             debug=args.debug,
         )
 
-    # %%
     # create a mask for the leadtimes
     train_ldt_mask = da.logical_and(
         data["train"]["leadtime"] >= args.min_leadtime,
@@ -358,12 +365,10 @@ if __name__ == "__main__":
     # which is 168 hours
     print("Encoding leadtime...", flush=True)
     max_train_ldt = data["train"]["leadtime"][train_ldt_mask].max().compute()
-    train_leadtimes = (
-        data["train"]["leadtime"][train_ldt_mask] / max_train_ldt
-    ).compute(scheduler="threads")
+    train_leadtimes = data["train"]["leadtime"][train_ldt_mask] / max_train_ldt
     validation_leadtimes = (
         data["validation"]["leadtime"][validation_ldt_mask] / max_train_ldt
-    ).compute(schedule="threads")
+    )
 
     if args.raw_target:
         train_target = data["train"]["outputs"][train_ldt_mask]
@@ -381,32 +386,110 @@ if __name__ == "__main__":
             - data["validation"]["base_intensity"][validation_ldt_mask]
         )
 
-    # Save the training and validation inputs as zarrays in the cache
-    train_data.rechunk((1000, -1, -1, -1)).to_zarr(
-        os.path.join(cache_dir, "train_data.zarr"), overwrite=args.overwrite_cache
-    )
-    valid_data.rechunk((1000, -1, -1, -1)).to_zarr(
-        os.path.join(cache_dir, "valid_data.zarr"), overwrite=args.overwrite_cache
+    # %%
+    # Check if the cache directory includes a zarray store for the data
+    zarr_path = os.path.join(cache_dir, "zarray_store")
+    if not os.path.exists(zarr_path):
+        os.makedirs(zarr_path)
+    zarr_store = zr.DirectoryStore(zarr_path)
+
+    # Check if the root group exists, if not create it
+    root = zr.group(zarr_store)
+    root = zr.open_group(zarr_path)
+
+    # Check that the training and validation groups exist, if not create them
+    if "train" not in root:
+        root.create_group("train")
+    if "validation" not in root:
+        root.create_group("validation")
+
+    # Check if the data is already stored in the cache
+    train_zarr = root["train"]
+    valid_zarr = root["validation"]
+
+    train_arrays = list(train_zarr.array_keys())
+    valid_arrays = list(valid_zarr.array_keys())
+    # %%
+    # Handle the AI and target data in the zarr store
+    found = np.all(
+        [
+            "AIX" in train_arrays,
+            "target" in train_arrays,
+            "AIX" in valid_arrays,
+            "target" in valid_arrays,
+        ]
     )
 
-    train_zarr = zr.open(
-        os.path.join(cache_dir, "train_data.zarr"), mode="a", chunks=(1000, -1, -1, -1)
-    )
-    valid_zarr = zr.open(
-        os.path.join(cache_dir, "valid_data.zarr"), mode="a", chunks=(1000, -1, -1, -1)
-    )
+    if not found or args.overwrite_cache:
+        dask.config.set(scheduler="threads")
+        train_data.rechunk((1000, -1, -1, -1)).to_zarr(
+            zarr_store,
+            component="train/AIX",
+            overwrite=True,
+        )
+        print("Train data stored in cache...", flush=True)
+        train_target.rechunk((1000, -1, -1)).to_zarr(
+            zarr_store,
+            component="train/target",
+            overwrite=True,
+        )
+        print("Train target stored in cache...", flush=True)
+        valid_data.rechunk((1000, -1, -1, -1)).to_zarr(
+            zarr_store,
+            component="validation/AIX",
+            overwrite=True,
+        )
+        print("Validation data stored in cache...", flush=True)
+        valid_target.rechunk(
+            (
+                1000,
+                -1,
+                -1,
+            )
+        ).to_zarr(zarr_store, component="validation/target", overwrite=True)
+        print("Validation target stored in cache...", flush=True)
     # %%
-    # Loading the mask to apply that depends on the leadtime
-    if args.mask:
+    # Load the data from the zarr store
+    train_data = da.from_zarr(
+        zarr_store, component="train/AIX", chunks=(1000, -1, -1, -1)
+    )
+    train_target = da.from_zarr(zarr_store, component="train/target")
+    valid_data = da.from_zarr(
+        zarr_store, component="validation/AIX", chunks=(1000, -1, -1, -1)
+    )
+    valid_target = da.from_zarr(zarr_store, component="validation/target")
+    # %%
+    # Handle masking in the zarr store if necessary
+    found = np.all(
+        [
+            "masked_AIX" in train_arrays,
+            "masked_AIX" in valid_arrays,
+            "train/mask" in train_arrays,
+            "validation/mask" in valid_arrays,
+        ]
+    )
+
+    if args.mask and ((not found) or args.overwrite_cache):
         mask_path = args.mask_path
         with open(mask_path, "rb") as f:
             mask_dict = pickle.load(f)[args.mask_type]
 
-        print("Applying radial mask...", flush=True)
-        unique_leads = da.unique(data["train"]["leadtime"]).compute()
-
-        train_mask = da.ones((train_data.shape[0], 241, 241), chunks=(1000, -1, -1))
-        valid_mask = da.ones((valid_data.shape[0], 241, 241), chunks=(1000, -1, -1))
+        print("Calculating radial mask...", end="", flush=True)
+        unique_leads = da.unique(data["train"]["leadtime"]).compute(scheduler="threads")
+        train_mask = zr.ones(
+            (train_data.shape[0], 1, 241, 241),
+            chunks=(1000, 1, 241, 241),
+            store=zarr_store,
+            path="train/mask",
+            overwrite=True,
+        )
+        valid_mask = zr.ones(
+            (valid_data.shape[0], 1, 241, 241),
+            chunks=(1000, 1, 241, 241),
+            store=zarr_store,
+            path="validation/mask",
+            overwrite=True,
+        )
 
         for lead in unique_leads:
             radial_mask = mask_dict[lead]
@@ -417,49 +500,152 @@ if __name__ == "__main__":
             temp_ldt_mask_valid = (
                 (data["validation"]["leadtime"] == lead).compute().squeeze()
             )
+            temp_ldt_mask_train = np.nonzero(temp_ldt_mask_train)[0]
+            temp_ldt_mask_valid = np.nonzero(temp_ldt_mask_valid)[0]
 
-            train_mask[temp_ldt_mask_train] = (
-                train_mask[temp_ldt_mask_train] * radial_mask
+            train_mask[temp_ldt_mask_train, 0, :, :] = (
+                train_mask[temp_ldt_mask_train, 0, :, :] * radial_mask
             )
-            valid_mask[temp_ldt_mask_valid] = (
-                valid_mask[temp_ldt_mask_valid] * radial_mask
+            valid_mask[temp_ldt_mask_valid, 0, :, :] = (
+                valid_mask[temp_ldt_mask_valid, 0, :, :] * radial_mask
             )
 
-        train_mask = train_mask.rechunk((1000, -1, -1))
-        valid_mask = valid_mask.rechunk((1000, -1, -1))
+        train_mask = da.from_zarr(
+            zarr_store, component="train/mask", chunks=(1000, -1, -1, -1)
+        )
+        valid_mask = da.from_zarr(
+            zarr_store, component="validation/mask", chunks=(1000, -1, -1, -1)
+        )
 
-        # Define the lambda function to apply the mask
-        apply_mask = lambda chunk, mask: chunk * mask
+        # Function to apply the mask to each block of images
+        def apply_mask(image_block, mask_block):
+            masked_images = image_block * mask_block
+            return masked_images
 
-        # # Apply the mask to each chunk
-        # train_data_processed = da.map_blocks(apply_mask, train_data, train_mask)
-        # valid_data_processed = da.map_blocks(apply_mask, valid_data, valid_mask)
+        masked_train = da.map_blocks(
+            apply_mask,
+            train_data,
+            train_mask,
+            dtype=train_data.dtype,
+            chunks=train_data.chunks,
+        )
+        masked_valid = da.map_blocks(
+            apply_mask,
+            valid_data,
+            valid_mask,
+            dtype=valid_data.dtype,
+            chunks=valid_data.chunks,
+        )
 
-        print("Starting radial mask on-disk compute...")
-        da.map_blocks(apply_mask, train_data, train_mask).compute(schedule="threads")
-        da.map_blocks(apply_mask, valid_data, valid_mask).compute(schedule="threads")
+        masked_train.to_zarr(zarr_store, component="train/masked_AIX", overwrite=True)
+        masked_valid.to_zarr(
+            zarr_store, component="validation/masked_AIX", overwrite=True
+        )
 
-        # train_zarr[temp_ldt_mask_train] = (
-        #     train_data[temp_ldt_mask_train] * radial_mask
-        # ).compute(scheduler="threads")
-        # train_zarr[temp_ldt_mask_valid] = (
-        #     valid_data[temp_ldt_mask_valid] * radial_mask
-        # ).compute(scheduler="threads")
+        # Load the data from the zarr store
+        train_data = da.from_zarr(
+            zarr_store, component="train/masked_AIX", chunks=(1000, -1, -1, -1)
+        )
+        valid_data = da.from_zarr(
+            zarr_store, component="validation/masked_AIX", chunks=(1000, -1, -1, -1)
+        )
+    elif args.mask and found:
+        train_data = da.from_zarr(
+            zarr_store, component="train/masked_AIX", chunks=(1000, -1, -1, -1)
+        )
+        valid_data = da.from_zarr(
+            zarr_store, component="validation/masked_AIX", chunks=(1000, -1, -1, -1)
+        )
+    # %%
+    # handle the leadtime in the zarr store
+    found = np.all(
+        [
+            "train/leadtime" in train_arrays,
+            "validation/leadtime" in valid_arrays,
+        ]
+    )
 
-        # train_shape = train_data[data["train"]["leadtime"][train_ldt_mask] == lead]
+    if not found or args.overwrite_cache:
+        data["train"]["leadtime"][train_ldt_mask].rechunk((1000, -1)).to_zarr(
+            zarr_store, component="train/leadtime", overwrite=True
+        )
+        data["validation"]["leadtime"][validation_ldt_mask].rechunk((1000, -1)).to_zarr(
+            zarr_store, component="validation/leadtime", overwrite=True
+        )
 
-        # .shape()
-        # valid_shape = valid_data[data["validation"]["leadtime"] == lead].shape()
+    # Load the data from the zarr store
+    train_leadtimes = da.from_zarr(zarr_store, component="train/leadtime")
+    valid_leadtimes = da.from_zarr(zarr_store, component="validation/leadtime")
 
-        # train_data[data["train"]["leadtime"] == lead] = train_data[
-        #     data["train"]["leadtime"] == lead
-        # ] * da.tile(radial_mask, (train_shape[0], train_shape[1], 1, 1))
-        # valid_data[data["validation"]["leadtime"] == lead] = valid_data[
-        #     data["validation"]["leadtime"] == lead
-        # ] * da.tile(radial_mask, (valid_shape[0], valid_shape[1], 1, 1))
-        print("Radial mask applied", flush=True)
-        train_data = da.from_zarr(train_zarr)
-        valid_data = da.from_zarr(valid_zarr)
+    print("Preparing base intensity and position...", flush=True)
+    # handle the base intensity and position in the zarr store
+    found = np.all(
+        [
+            "train/base_intensity" in train_arrays,
+            "validation/base_intensity" in valid_arrays,
+            "train/base_position" in train_arrays,
+            "validation/base_position" in valid_arrays,
+        ]
+    )
+
+    if not found or args.overwrite_cache:
+        data["train"]["base_intensity"][train_ldt_mask].rechunk((1000, -1, -1)).to_zarr(
+            zarr_store, component="train/base_intensity", overwrite=True
+        )
+        data["validation"]["base_intensity"][validation_ldt_mask].rechunk(
+            (1000, -1, -1)
+        ).to_zarr(zarr_store, component="validation/base_intensity", overwrite=True)
+        data["train"]["base_position"][train_ldt_mask].rechunk((1000, -1)).to_zarr(
+            zarr_store, component="train/base_position", overwrite=True
+        )
+        data["validation"]["base_position"][validation_ldt_mask].rechunk(
+            (1000, -1)
+        ).to_zarr(zarr_store, component="validation/base_position", overwrite=True)
+
+    # Load the data from the zarr store
+    train_base_intensity = da.from_zarr(zarr_store, component="train/base_intensity")
+    valid_base_intensity = da.from_zarr(
+        zarr_store, component="validation/base_intensity"
+    )
+    train_base_position = da.from_zarr(zarr_store, component="train/base_position")
+    valid_base_position = da.from_zarr(zarr_store, component="validation/base_position")
+
+    print("Preparing scaled base intensity...", flush=True)
+    found = np.all(
+        [
+            "train/base_intensity_scaled" in train_arrays,
+            "validation/base_intensity_scaled" in valid_arrays,
+        ]
+    )
+
+    if not found or args.overwrite_cache:
+        # scale the base intensity using the cached scaler if available
+        da.map_blocks(
+            transform_data,
+            train_base_intensity,
+            base_scaler,
+            dtype=train_base_intensity.dtype,
+            chunks=train_base_intensity.chunks,
+        ).to_zarr(zarr_store, component="train/base_intensity_scaled", overwrite=True)
+        da.map_blocks(
+            transform_data,
+            valid_base_intensity,
+            base_scaler,
+            dtype=valid_base_intensity.dtype,
+            chunks=valid_base_intensity.chunks,
+        ).to_zarr(
+            zarr_store, component="validation/base_intensity_scaled", overwrite=True
+        )
+
+    # Load the data from the zarr store
+    train_base_intensity = da.from_zarr(
+        zarr_store, component="train/base_intensity_scaled"
+    )
+    valid_base_intensity = da.from_zarr(
+        zarr_store, component="validation/base_intensity_scaled"
+    )
+
+    # %%
     # And scale the target data using the cached scaler if available
     target_scaler = None
     from_cache = not args.overwrite_cache
@@ -479,11 +665,65 @@ if __name__ == "__main__":
         # save the scaler to the cache
         with open(fpath, "wb") as f:
             pickle.dump(target_scaler, f)
+    # %%
+    print("Preparing scaled data...", flush=True)
+    found = np.all(
+        [
+            "train/AIX_scaled" in train_arrays,
+            "validation/AIX_scaled" in valid_arrays,
+            "train/target_scaled" in train_arrays,
+            "validation/target_scaled" in valid_arrays,
+        ]
+    )
 
+    if not found or args.overwrite_cache:
+        train_data = da.map_blocks(
+            transform_data,
+            train_data,
+            AI_scaler,
+            dtype=train_data.dtype,
+            chunks=train_data.chunks,
+        )
+        valid_data = da.map_blocks(
+            transform_data,
+            valid_data,
+            AI_scaler,
+            dtype=valid_data.dtype,
+            chunks=valid_data.chunks,
+        )
+        train_target = da.map_blocks(
+            transform_data,
+            train_target,
+            target_scaler,
+            dtype=train_target.dtype,
+            chunks=train_target.chunks,
+        )
+        valid_target = da.map_blocks(
+            transform_data,
+            valid_target,
+            target_scaler,
+            dtype=valid_target.dtype,
+            chunks=valid_target.chunks,
+        )
+
+    train_data.to_zarr(zarr_store, component="train/AIX_scaled", overwrite=True)
+    valid_data.to_zarr(zarr_store, component="validation/AIX_scaled", overwrite=True)
+    train_target.to_zarr(zarr_store, component="train/target_scaled", overwrite=True)
+    valid_target.to_zarr(
+        zarr_store, component="validation/target_scaled", overwrite=True
+    )
+    # %%
+    # Load as zarr, not dask, arrays
+    train_data = zr.open(zarr_store, mode="r")["train/AIX_scaled"]
+    valid_data = zr.open(zarr_store, mode="r")["validation/AIX_scaled"]
+    train_target = zr.open(zarr_store, mode="r")["train/target_scaled"]
+    valid_target = zr.open(zarr_store, mode="r")["validation/target_scaled"]
+
+    # %%
     #  Dataloader & Hyperparameters
 
     # Let's define some hyperparameters
-    batch_size = 32
+    batch_size = 128
 
     # If the mode is not deterministic, we'll set the loss to CRPS
     if args.mode != "deterministic":
@@ -506,53 +746,39 @@ if __name__ == "__main__":
     # Validation first because it's smaller and will be used to evaluate if the code
     # is working as expected
     print("Creating validation DaskDataset and dataloader...", flush=True)
-    validation_dataset = mlf.DaskDataset(
+    validation_dataset = mlf.ZarrDataset(
         AI_X=valid_data,
-        AI_scaler=AI_scaler,
-        base_int=data["validation"]["base_intensity"][validation_ldt_mask],
-        base_scaler=base_scaler,
+        base_int=valid_base_intensity,
         target_data=valid_target,
-        target_scaler=target_scaler,
         device=calc_device,
-        cachedir=cache_dir,
-        zarr_name="validation",
-        overwrite=args.overwrite_cache,
         num_workers=num_cores,
-        track=valid_positions,
+        track=valid_base_position,
         leadtimes=validation_leadtimes,
-        # load_into_memory=True,
     )
 
     validation_loader = mlf.make_dataloader(
         validation_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=3,
         pin_memory=True,
     )
 
     print("Creating training DaskDataset and dataloader...", flush=True)
-    train_dataset = mlf.DaskDataset(
+    train_dataset = mlf.ZarrDataset(
         AI_X=train_data,
-        AI_scaler=AI_scaler,
-        base_int=data["train"]["base_intensity"][train_ldt_mask],
-        base_scaler=base_scaler,
+        base_int=train_base_intensity,
         target_data=train_target,
-        target_scaler=target_scaler,
         device=calc_device,
-        cachedir=cache_dir,
-        zarr_name="training",
-        overwrite=args.overwrite_cache,
-        num_workers=num_cores,
-        track=train_positions,
+        num_workers=num_workers,
+        track=train_base_position,
         leadtimes=train_leadtimes,
-        # load_into_memory=True,
     )
     train_loader = mlf.make_dataloader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
+        num_workers=3,
         pin_memory=True,
     )
 
@@ -617,9 +843,9 @@ if __name__ == "__main__":
             #     scalars=batch_scalars,
             # )
             # print(AI_X.device, scalars.device)
-            AI_X = AI_X.to(calc_device, non_blocking=True)
-            scalars = scalars.to(calc_device, non_blocking=True)
-            target = target.to(calc_device, non_blocking=True)
+            AI_X = AI_X.to(calc_device)
+            scalars = scalars.to(calc_device)
+            target = target.to(calc_device)
             # print(AI_X.device, scalars.device)
 
             prediction = CNN(x=AI_X, scalars=scalars)
@@ -681,11 +907,11 @@ if __name__ == "__main__":
         i = 0
         with torch.no_grad():
             for AI_X, scalars, target in validation_loader:
-                print(
-                    f"\r {AI_X.dtype} {scalars.dtype} {target.dtype}",
-                    end="",
-                    flush=True,
-                )
+                # print(
+                #     f"\r {AI_X.dtype} {scalars.dtype} {target.dtype}",
+                #     end="",
+                #     flush=True,
+                # )
                 i += 1
                 # batch_data = AI_X.to(calc_device)
                 # batch_scalars = scalars.to(calc_device)
@@ -694,9 +920,9 @@ if __name__ == "__main__":
                 #     scalars=batch_scalars,
                 # )
 
-                AI_X = AI_X.to(calc_device, non_blocking=True)
-                scalars = scalars.to(calc_device, non_blocking=True)
-                target = target.to(calc_device, non_blocking=True)
+                AI_X = AI_X.to(calc_device)
+                scalars = scalars.to(calc_device)
+                target = target.to(calc_device)
                 prediction = CNN(x=AI_X, scalars=scalars)
 
                 if args.aux_loss:

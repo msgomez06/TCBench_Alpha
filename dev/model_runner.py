@@ -1,5 +1,8 @@
+# %% Important TODO: Separate preprocessing script from training script
+# This should be easily doable now with on disk data caching.
+
 # %%
-#  Imports
+# Imports
 # OS and IO
 import os
 import sys
@@ -55,6 +58,7 @@ if __name__ == "__main__":
             # "--reanalysis",
             "--cache_dir",
             "/scratch/mgomezd1/cache",
+            # "/srv/scratch/mgomezd1/cache",
             "--mask",
             "--magAngle_mode",
         ]
@@ -206,10 +210,9 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--saved_model",
-        type=str,
-        default=None,
-        help="Path to the saved model to load",
+        "--dask_array",
+        action="store_true",
+        help="Whether to use dask arrays for the dataset",
     )
 
     args = parser.parse_args()
@@ -233,143 +236,92 @@ if __name__ == "__main__":
 
     num_cores = int(subprocess.check_output(["nproc"], text=True).strip())
 
+    # %%
     # Check if the cache directory includes a zarray store for the data
-    try:
-        zarr_path = os.path.join(cache_dir, "zarray_store")
-        zarr_store = zr.DirectoryStore(zarr_path)
-    except FileNotFoundError:
-        raise (
-            "Zarray Cache directory not found. Evaluation requires that the data be cached. Please run the data preparation script first."
-        )
+    zarr_path = os.path.join(cache_dir, "zarray_store")
+    if not os.path.exists(zarr_path):
+        os.makedirs(zarr_path)
+    zarr_store = zr.DirectoryStore(zarr_path)
 
+    # Check if the root group exists, if not create it
+    root = zr.group(zarr_store)
     root = zr.open_group(zarr_path)
 
-    # Check that the validation group exists
-    assert (
-        "validation" in root
-    ), "Validation group not found in cache directory. Evaluation is run on the validation set."
+    # Check that the training and validation groups exist, if not create them
+    if "train" not in root:
+        root.create_group("train")
+    if "validation" not in root:
+        root.create_group("validation")
 
-    # Check that the validationmask exists if --mask is True
-    if args.mask:
-        assert (
-            "validation/mask" in root
-        ), "Validation mask not found in cache directory. Please run the data preparation script with --mask True."
+    # Check if the data is already stored in the cache
+    train_zarr = root["train"]
+    valid_zarr = root["validation"]
 
-    # Check that the validation leadtime group exists
-    assert (
-        "validation/leadtime" in root
-    ), "Validation leadtime group not found in cache directory. Evaluation is run on the validation set."
+    train_arrays = list(train_zarr.array_keys())
+    valid_arrays = list(valid_zarr.array_keys())
 
-    # Load the data from the zarr store
-    train_target = zr.open(zarr_store, mode="r")["train/target_scaled"]
-    valid_target = zr.open(zarr_store, mode="r")["validation/target_scaled"]
-    leadtimes = zr.open(zarr_store, mode="r")["train/leadtime"]
+    # assert that AIX_masked, target_scaled, base_intensity_scaled, base_position, leadtime_scaled are in each group
+    assert np.all(
+        [
+            "masked_AIX" in train_arrays,
+            "target_scaled" in train_arrays,
+            "base_intensity_scaled" in train_arrays,
+            "base_position" in train_arrays,
+            "leadtime_scaled" in train_arrays,
+            "leadtime" in train_arrays,
+            "masked_AIX" in valid_arrays,
+            "target_scaled" in valid_arrays,
+            "base_intensity_scaled" in valid_arrays,
+            "base_position" in valid_arrays,
+            "leadtime_scaled" in valid_arrays,
+            "leadtime" in valid_arrays,
+        ]
+    ), "Missing Data in the cache"
 
-    unique_leads = np.unique(leadtimes)
-
-    #  Model
-    # Load the saved model
-    model_path = os.path.join(result_dir, args.saved_model)
-    MLR = torch.load(model_path)
-
-    #  Training
-    lead_times = []
-    val_losses = []
-
-    for lead in unique_leads:
-        print(f"Working on Leadtime: {lead}h")
-
-        lead_times.append(lead)
-
-        temp_mask = data["validation"]["leadtime"] == lead
-        temp_mask = np.squeeze(temp_mask.compute())
-
-        # We then instantiate the DaskDataset class for the training and validation sets.
-        # Validation first because it's smaller and will be used to evaluate if the code
-        # is working as expected
-        print("Creating validation DaskDataset and dataloader...", flush=True)
-        validation_dataset = mlf.DaskDataset(
-            AI_X=valid_data[temp_mask],
-            AI_scaler=AI_scaler,
-            base_int=data["validation"]["base_intensity"][validation_ldt_mask][
-                temp_mask
-            ],
-            base_scaler=base_scaler,
-            target_data=valid_target[temp_mask],
-            target_scaler=target_scaler,
-            device=calc_device,
-            cachedir=cache_dir,
-            zarr_name=f"val_{lead}h",
-            overwrite=args.overwrite_cache,
-            num_workers=num_cores,
-            track=valid_positions[temp_mask],
-            leadtimes=validation_leadtimes[temp_mask],
-            chunk_size=512,
-            # load_into_memory=True,
+    if args.dask_array:
+        # Load the data from the zarr store using dask array
+        train_data = da.from_zarr(zarr_store, component="train/masked_AIX")
+        train_target = da.from_zarr(zarr_store, component="train/target_scaled")
+        valid_data = da.from_zarr(zarr_store, component="validation/masked_AIX")
+        valid_target = da.from_zarr(zarr_store, component="validation/target_scaled")
+        train_leadtimes = da.from_zarr(zarr_store, component="train/leadtime_scaled")
+        validation_leadtimes = da.from_zarr(
+            zarr_store, component="validation/leadtime_scaled"
         )
-
-        validation_loader = mlf.make_dataloader(
-            validation_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
+        train_base_intensity = da.from_zarr(
+            zarr_store, component="train/base_intensity_scaled"
         )
-
-        val_loss = 0
-        with torch.no_grad():
-            i = 0
-            for AI_X, scalars, target in validation_loader:
-                i += 1
-                prediction = MLR(x=AI_X, scalars=scalars)
-                batch_loss = loss_func(prediction, target)
-
-                val_loss += batch_loss.item()
-
-                # print a simple progress bar that shows a dot for each percent of the batch
-                print(
-                    "\r"
-                    + f"Batch val loss: {val_loss:.4f}, "
-                    + f"{i}/{len(validation_loader)}"
-                    + "." * int(20 * i / len(validation_loader)),
-                    end="",
-                    flush=True,
-                )
-
-        val_loss = val_loss / len(validation_loader)
-        val_losses.append(val_loss)
-
-        print(
-            f"\nLead: {lead},",
-            f"val_loss: {val_loss},",
-            flush=True,
-            sep=" ",
+        valid_base_intensity = da.from_zarr(
+            zarr_store, component="validation/base_intensity_scaled"
         )
+        train_base_position = da.from_zarr(zarr_store, component="train/base_position")
+        valid_base_position = da.from_zarr(
+            zarr_store, component="validation/base_position"
+        )
+        train_unscaled_leadtimes = da.from_zarr(zarr_store, component="train/leadtime")
+        validation_unscaled_leadtimes = da.from_zarr(
+            zarr_store, component="validation/leadtime"
+        )
+    else:
+        # load data with zarr
+        train_data = train_zarr["masked_AIX"]
+        train_target = train_zarr["target_scaled"]
+        valid_data = valid_zarr["masked_AIX"]
+        valid_target = valid_zarr["target_scaled"]
+        train_leadtimes = train_zarr["leadtime_scaled"]
+        validation_leadtimes = valid_zarr["leadtime_scaled"]
+        train_base_intensity = train_zarr["base_intensity_scaled"]
+        valid_base_intensity = valid_zarr["base_intensity_scaled"]
+        train_base_position = train_zarr["base_position"]
+        valid_base_position = valid_zarr["base_position"]
+        train_unscaled_leadtimes = train_zarr["leadtime"]
+        validation_unscaled_leadtimes = valid_zarr["leadtime"]
 
-    #  Save the results
-    print("Saving results...", flush=True)
-    results = {
-        "lead_times": lead_times,
-        "val_losses": val_losses,
-    }
-
-    with open(os.path.join(result_dir, "eval_results.pkl"), "wb") as f:
-        pickle.dump(results, f)
-
-    print("Done!", flush=True)
-
-    #  Plotting
-    print("Plotting...", flush=True)
-    fig, ax = plt.subplots()
-    ax.plot(lead_times, val_losses)
-    ax.set_xlabel("Leadtime (h)")
-    ax.set_ylabel("Validation Loss")
-    ax.set_title("Validation Loss vs. Leadtime")
-    fig.savefig(os.path.join(result_dir, "eval_results.png"))
-
+    # %%
     #  Dataloader & Hyperparameters
 
     # Let's define some hyperparameters
-    batch_size = 128
+    batch_size = 256
 
     # If the mode is not deterministic, we'll set the loss to CRPS
     if args.mode != "deterministic":
@@ -387,47 +339,48 @@ if __name__ == "__main__":
         if (calc_device == torch.device("cpu") and num_cores > 1)
         else num_cores
     )
-
+    # %%
     # We then instantiate the DaskDataset class for the training and validation sets.
     # Validation first because it's smaller and will be used to evaluate if the code
     # is working as expected
     print("Creating validation DaskDataset and dataloader...", flush=True)
-    validation_dataset = mlf.ZarrDataset(
+    validation_dataset = mlf.ZarrDatasetv2(
         AI_X=valid_data,
         base_int=valid_base_intensity,
         target_data=valid_target,
         device=calc_device,
-        num_workers=num_cores,
+        num_workers=1,
         track=valid_base_position,
         leadtimes=validation_leadtimes,
     )
-
+    # %%
     validation_loader = mlf.make_dataloader(
         validation_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=3,
-        pin_memory=True,
+        num_workers=1,
+        # pin_memory=True,
     )
-
+    # %%
     print("Creating training DaskDataset and dataloader...", flush=True)
-    train_dataset = mlf.ZarrDataset(
+    train_dataset = mlf.ZarrDatasetv2(
         AI_X=train_data,
         base_int=train_base_intensity,
         target_data=train_target,
         device=calc_device,
-        num_workers=num_workers,
+        num_workers=1,
         track=train_base_position,
         leadtimes=train_leadtimes,
     )
+    # %%
     train_loader = mlf.make_dataloader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=3,
-        pin_memory=True,
+        num_workers=1,
+        # pin_memory=True,
     )
-
+    # %%
     if emulate:
         input("Press Enter to continue...")
     #  Model
@@ -441,7 +394,8 @@ if __name__ == "__main__":
         dropout=args.dropout,
         dropout2d=args.dropout,
         aux_loss=args.aux_loss,
-    ).to(calc_device)
+    )
+    CNN.to(calc_device)
     # CNN = baselines.SimpleCNN(
     #     deterministic=True if args.mode == "deterministic" else False,
     #     num_scalars=train_dataset.num_scalars,
@@ -457,7 +411,7 @@ if __name__ == "__main__":
     )
 
     num_epochs = 100
-    patience = 5  # stop if validation loss increases for patience epochs
+    patience = 15  # stop if validation loss increases for patience epochs
     bias_threshold = 30  # stop if validation loss / train loss > bias_threshold
 
     #  Training
@@ -489,6 +443,12 @@ if __name__ == "__main__":
             #     scalars=batch_scalars,
             # )
             # print(AI_X.device, scalars.device)
+
+            # convert to float32
+            AI_X = AI_X.float()
+            scalars = scalars.float()
+            target = target.float()
+
             AI_X = AI_X.to(calc_device)
             scalars = scalars.to(calc_device)
             target = target.to(calc_device)
@@ -565,6 +525,10 @@ if __name__ == "__main__":
                 #     x=batch_data,
                 #     scalars=batch_scalars,
                 # )
+
+                AI_X = AI_X.float()
+                scalars = scalars.float()
+                target = target.float()
 
                 AI_X = AI_X.to(calc_device)
                 scalars = scalars.to(calc_device)
@@ -686,159 +650,3 @@ if __name__ == "__main__":
         )
 
     # %%
-
-    # def eval_prediction(
-    #     model,  # ML model
-    #     loader,  # Dataloader
-    #     target_scaler,  # Target scaler
-    #     baseline_pred,  # Baseline prediction
-    #     y_true,  # Ground truth
-    #     result_dir,  # Results directory
-    #     start_time,  # Start time
-    #     set_type,  # Type of dataset
-    #     data,  # Data dictionary
-    #     **kwargs,
-    # ):
-    #     # Predict the validation data with the CNN model
-    #     with torch.no_grad():
-    #         y_hat = None
-    #         for AI_X, base_int, target in loader:
-    #             pred = model(AI_X, base_int)
-    #             if y_hat is None:
-    #                 y_hat = pred.cpu().numpy()
-    #             else:
-    #                 y_hat = np.concatenate([y_hat, pred.cpu().numpy()])
-
-    #     # reverse transform y_hat
-    #     y_hat = target_scaler.inverse_transform(y_hat)
-
-    #     #  Compute y_true, y_baseline
-    #     y_baseline = baseline_pred.compute()
-
-    #     #  Evaluation
-    #     # We will want to evaluate the model using the Root Mean Squared Error and
-    #     # the Mean Absolute Error, as well as the associated skill scores compared
-    #     # to the persistence model
-
-    #     global_performance = metrics.summarize_performance(
-    #         y_true,  # Ground truth
-    #         y_hat,  # Model prediction
-    #         y_baseline,  # Baseline, used for skill score calculations
-    #         [root_mean_squared_error, mean_absolute_error],
-    #     )
-
-    #     # Plotting Global Performance
-    #     fig, axes = plt.subplots(
-    #         1, 2, figsize=(15, 5), dpi=150, gridspec_kw={"width_ratios": [2, 1]}
-    #     )
-    #     metrics.plot_performance(
-    #         global_performance,
-    #         axes,
-    #         model_name=f"{str(CNN)}",
-    #         baseline_name=kwargs.get("baseline_name", "Persistence"),
-    #     )
-    #     toolbox.plot_facecolors(fig=fig, axes=axes)
-    #     # Save the figure in the results directory
-    #     fig.savefig(
-    #         os.path.join(
-    #             result_dir,
-    #             f"CNN_global_performance_{str(model)}_{start_time}_{set_type}.png",
-    #         )
-    #     )
-
-    #     # Per leadtime analysis
-    #     unique_leads = data[set_type]["leadtime"].compute()
-    #     num_leads = len(unique_leads)
-    #     # set up the axes for the lead time plots
-
-    #     fig, axes = plt.subplots(
-    #         num_leads,  # One row per lead time
-    #         2,
-    #         figsize=(15, 5 * num_leads),
-    #         dpi=150,
-    #         gridspec_kw={"width_ratios": [2, 1]},
-    #     )
-    #     for idx, lead in enumerate(unique_leads):
-    #         lead_mask = data[set_type]["leadtime"] == lead
-
-    #         y_true_lead = y_true[lead_mask]
-    #         y_hat_lead = y_hat[lead_mask]
-    #         y_baseline_lead = y_baseline[lead_mask]
-
-    #         lead_performance = metrics.summarize_performance(
-    #             y_true_lead,  # Ground truth
-    #             y_hat_lead,  # Model prediction
-    #             y_baseline_lead,  # Baseline, used for skill score calculations
-    #             [root_mean_squared_error, mean_absolute_error],
-    #         )
-
-    #         metrics.plot_performance(
-    #             lead_performance,
-    #             axes[idx],
-    #             model_name=f"{str(model)}",
-    #             baseline_name="Persistence",
-    #         )
-    #         toolbox.plot_facecolors(fig=fig, axes=axes[idx])
-
-    #         # Append the lead time to the title for both axes
-    #         axes[idx][0].set_title(
-    #             f"\n Lead Time: +{lead}h \n" + axes[idx][0].get_title()
-    #         )
-    #         axes[idx][1].set_title(
-    #             f"\n Lead Time: +{lead}h \n" + axes[idx][1].get_title()
-    #         )
-
-    #     # Save the figure in the results directory
-    #     fig.savefig(
-    #         os.path.join(
-    #             result_dir,
-    #             f"CNN_lead_performance_{str(model)}_{start_time}_{set_type}.png",
-    #         )
-    #     )
-
-    # # Evaluate on the validation set
-
-    # # We want to compare the model to a simple baseline, in this case
-    # # the persistence model. Since our target is delta, persistence
-    # # is simply 0
-    # y_persistence = np.zeros_like(valid_delta)
-
-    # #  Evaluation
-    # # Let's start by loading the validation outputs into a variable
-    # # for easier access
-    # y_true = valid_delta
-
-    # eval_prediction(
-    #     model=CNN,
-    #     loader=validation_loader,
-    #     target_scaler=target_scaler,
-    #     baseline_pred=y_persistence,
-    #     y_true=y_true,
-    #     result_dir=result_dir,
-    #     start_time=start_time,
-    #     set_type="validation",
-    #     data=data,
-    # )
-    # # Evaluate on the training set
-
-    # # We want to compare the model to a simple baseline, in this case
-    # # the persistence model. Since our target is delta, persistence
-    # # is simply 0
-    # y_persistence = np.zeros_like(train_delta)
-
-    # #  Evaluation
-    # # Let's start by loading the validation outputs into a variable
-    # # for easier access
-    # y_true = train_delta
-
-    # eval_prediction(
-    #     model=CNN,
-    #     loader=train_loader,
-    #     target_scaler=target_scaler,
-    #     baseline_pred=y_persistence,
-    #     y_true=y_true,
-    #     result_dir=result_dir,
-    #     start_time=start_time,
-    #     set_type="train",
-    #     data=data,
-    # )

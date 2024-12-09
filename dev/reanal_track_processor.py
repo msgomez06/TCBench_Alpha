@@ -16,12 +16,12 @@ from utils import data_lib as dlib
 import argparse
 
 # %% Load the seasons to process
-emulate = False
+emulate = True
 if emulate:
     sys.argv = [
         "reanal_track_processor.py",
         "--season",
-        "2020",
+        "2008",
     ]
 
 
@@ -31,20 +31,20 @@ parser.add_argument(
     "--season",
     type=int,
     help="The seasons to process",
-    default=2007,
+    default=2019,
 )
 
 args = parser.parse_args()
 
 # %%
-seasons = toolbox.get_TC_seasons(
-    season_list=[args.season],
-    datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/ilia/",
-)
 # seasons = toolbox.get_TC_seasons(
-#     season_list=[*range(2018, 2019)],
-#     datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+#     season_list=[args.season],
+#     datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/ilia/",
 # )
+seasons = toolbox.get_TC_seasons(
+    season_list=[*range(2019, 2020)],
+    datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+)
 
 # %% Control flags
 process = True
@@ -94,7 +94,7 @@ for season, storms in seasons.items():
                 ],
                 plevels={"temperature": [850], "geopotential": [500]},
                 masktype="rect",
-                circum_points=5 * 4,
+                circum_points=30 * 4,
                 n_jobs=n_jobs,
                 verbose=False,
             )

@@ -241,7 +241,8 @@ def ll_gridder(**kwargs):
 
     return lats, lons
 
-#%%
+
+# %%
 # Great circle distance calculations
 def haversine(latp, lonp, lat_list, lon_list, **kwargs):
     """──────────────────────────────────────────────────────────────────────────┐
@@ -286,7 +287,10 @@ def haversine(latp, lonp, lat_list, lon_list, **kwargs):
     a = np.where(np.sqrt(a) <= 1, a, np.sign(a))
 
     return 2 * 6371 * np.arcsin(np.sqrt(a))
-#%%
+
+
+# %%
+
 
 def list_to_list_haversine(point_list1, point_list2, **kwargs):
     """
@@ -317,7 +321,6 @@ def list_to_list_haversine(point_list1, point_list2, **kwargs):
         np.sin(dlon / 2), 2
     )
 
-
     # Assert that sqrt(a) is within machine precision of 1
     # assert np.all(np.sqrt(a) <= 1 + epsilon), 'Invalid argument for arcsin'
 
@@ -326,7 +329,10 @@ def list_to_list_haversine(point_list1, point_list2, **kwargs):
     a = np.where(np.sqrt(a) <= 1, a, np.sign(a))
 
     return 2 * 6371 * np.arcsin(np.sqrt(a))
-#%%
+
+
+# %%
+
 
 def get_coord_vars(dataset):
     lon_coord = lat_coord = time_coord = level_coord = leadtime_coord = False
@@ -1891,7 +1897,7 @@ class tc_track:
                                 # year the storm is active
                                 assert (
                                     len(var_meta[year]) == var_meta[year].sum()
-                                ), f"Missing variable data for {year}"
+                                ), f"Missing variable {var} data for {year}"
 
                                 dates = pd.to_datetime(self.timestamps)
                                 dates = dates[dates.hour.isin([0, 6, 12, 18])]
@@ -2693,7 +2699,7 @@ class tc_track:
         lat_delta = np.abs(end_positions[:, 0] - initial_positions[:, 0])[:, None]
         lon_delta = np.abs(end_positions[:, 1] - initial_positions[:, 1])[:, None]
 
-        return distances / 100, lat_delta, lon_delta
+        return distances, lat_delta, lon_delta
 
     def plot_track(self, **kwargs):
         """

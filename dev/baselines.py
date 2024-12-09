@@ -935,6 +935,30 @@ class TorchMLR(nn.Module):
         return x
 
 
+class TorchMLRv2(nn.Module):
+    def __str__(self):
+        return "TorchMLR"
+
+    def __init__(self, **kwargs):
+        super(TorchMLRv2, self).__init__()
+
+        num_scalars = kwargs.get("num_scalars", 2)
+
+        self.linear = nn.Linear(
+            num_scalars, 2 if kwargs.get("deterministic", False) else 4
+        )  # Linear layer
+
+    def forward(self, x):
+        # Find the maximum and min values across the x channels
+        x = torch.squeeze(x)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+
+        # Concatenate the max and min values with the scalar inputs
+        x = self.linear(x)
+        return x
+
+
 # %%
 
 # %%

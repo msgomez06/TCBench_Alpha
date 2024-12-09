@@ -161,13 +161,18 @@ class DaskDataset(Dataset):
     def __len__(self):
         return len(self.base_int)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx, **kwargs):
+
         # # Load the specific data points needed for this index
         AI_sample = self.AI_X[idx]
         scalar_sample = self.scalars[idx]
         target_sample = self.target_data[idx]
         if scalar_sample.ndim == 1:
             scalar_sample = scalar_sample[None, :]
+
+        AI_sample = AI_sample.compute(schedule="threads")
+        scalar_sample = scalar_sample.compute(schedule="threads")
+        target_sample = target_sample.compute(schedule="threads")
 
         sample = (AI_sample, scalar_sample, target_sample)
 
@@ -230,9 +235,93 @@ class ZarrDataset(Dataset):
             scalar_sample = scalar_sample[None, :]
 
         sample = (
-            torch.tensor(AI_sample, dtype=torch.float32),
-            torch.tensor(scalar_sample, dtype=torch.float32),
-            torch.tensor(target_sample, dtype=torch.float32),
+            torch.tensor(
+                (AI_sample.compute() if isinstance(AI_sample, da.Array) else AI_sample),
+                dtype=torch.float32,
+            ),
+            torch.tensor(
+                (
+                    scalar_sample.compute
+                    if isinstance(scalar_sample, da.Array)
+                    else scalar_sample
+                ),
+                dtype=torch.float32,
+            ),
+            torch.tensor(
+                (
+                    target_sample.compute()
+                    if isinstance(target_sample, da.Array)
+                    else target_sample
+                ),
+                dtype=torch.float32,
+            ),
+            # torch.tensor(scalar_sample, dtype=torch.float32),
+            # torch.tensor(target_sample, dtype=torch.float32),
+        )
+
+        return sample
+
+
+class ZarrDatasetv2(Dataset):
+    def __init__(self, AI_X, base_int, target_data, **kwargs):
+        # Assert that AI_X and base_int have the same length
+        assert (
+            AI_X.shape[0] == base_int.shape[0]
+        ), "AI_X and base_int should have the same length"
+
+        self.AI_X = AI_X[:]
+        self.base_int = base_int[:]
+        self.target_data = target_data[:]
+        self.scalars = base_int
+        if "track" in kwargs:
+            self.scalars = np.hstack([self.scalars, kwargs["track"]]).astype(np.float16)
+
+        if "leadtimes" in kwargs:
+            self.scalars = np.hstack([self.scalars, kwargs["leadtimes"]]).astype(
+                np.float16
+            )
+        # self.scalars = self.scalars.compute()
+        self.num_scalars = self.scalars.shape[1]
+
+        self.device = kwargs.get(
+            "device",
+            torch.device("cuda") if torch.cuda.is_available else torch.device("cpu"),
+        )
+
+    def __len__(self):
+        return len(self.base_int)
+
+    def __getitem__(self, idx):
+        # Load the specific data points needed for this index
+        AI_sample = self.AI_X[idx]
+        scalar_sample = self.scalars[idx]
+        target_sample = self.target_data[idx]
+        if scalar_sample.ndim == 1:
+            scalar_sample = scalar_sample[None, :]
+
+        sample = (
+            torch.tensor(
+                (AI_sample.compute() if isinstance(AI_sample, da.Array) else AI_sample),
+                dtype=torch.float16,
+            ),
+            torch.tensor(
+                (
+                    scalar_sample.compute
+                    if isinstance(scalar_sample, da.Array)
+                    else scalar_sample
+                ),
+                dtype=torch.float16,
+            ),
+            torch.tensor(
+                (
+                    target_sample.compute()
+                    if isinstance(target_sample, da.Array)
+                    else target_sample
+                ),
+                dtype=torch.float16,
+            ),
+            # torch.tensor(scalar_sample, dtype=torch.float32),
+            # torch.tensor(target_sample, dtype=torch.float32),
         )
 
         return sample

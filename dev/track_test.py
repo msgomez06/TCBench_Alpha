@@ -29,8 +29,8 @@ full_data = toolbox.read_hist_track_file(
     tracks_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/"
 )
 # %%
-data = full_data[full_data.ISO_TIME.dt.year == 2020]
-storm = data[data.NAME == "LAURA"]
+data = full_data[full_data.ISO_TIME.dt.year == 2019]
+storm = data[data.NAME == "DORIAN"]
 
 # %%
 if __name__ == "__main__":

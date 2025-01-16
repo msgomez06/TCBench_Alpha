@@ -25,6 +25,10 @@ from utils import toolbox, constants
 from utils.toolbox import *
 from utils import data_lib as dlib
 
+# import cartopy for coastlines
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
 full_data = toolbox.read_hist_track_file(
     tracks_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/"
 )
@@ -48,6 +52,157 @@ if __name__ == "__main__":
         storm_season=storm.SEASON.iloc[0],
         ai_model="panguweather",
     )
+
+    # %% Abstract Image
+
+    track.ReAnal.load()
+    track.ai.load()
+    era5 = track.ReAnal.ds
+    pangu = track.ai.ds
+
+    era5["wind"] = (era5["10u"] ** 2 + era5["10v"] ** 2) ** 0.5
+    pangu["wind"] = (pangu["u10"] ** 2 + pangu["v10"] ** 2) ** 0.5
+
+    forecast = pangu.sel(leadtime_hours=96)
+
+    snapshot = forecast.isel(time=10).wind
+
+    target_time = snapshot.time.values + np.timedelta64(96, "h")
+    era5_snapshot = era5.wind.sel(time=target_time)
+    era5_IC = era5.sel(time=snapshot.time.values).wind
+
+    delta = snapshot - era5_snapshot
+
+    cropped_snapshot = snapshot.where(delta.notnull(), drop=True)
+    delta = delta.where(delta.notnull(), drop=True)
+    era5_snapshot = era5_snapshot.where(delta.notnull(), drop=True)
+    era5_IC = era5_IC.where(era5_IC.notnull(), drop=True)
+
+    print_time = pd.Timestamp(target_time).strftime("%Y-%m-%d %H:%M")
+
+    min_val = min(
+        cropped_snapshot.min().values,
+        era5_snapshot.min().values,
+        era5_IC.min().values,
+        # delta.min().values,
+    )
+
+    max_val = max(
+        cropped_snapshot.max().values,
+        era5_snapshot.max().values,
+        era5_IC.max().values,
+        # delta.max().values,
+    )
+
+    # Select the non-nan areas
+    # %%
+    # create a figure and axis
+    fig, axs = plt.subplots(
+        2, 2, subplot_kw={"projection": ccrs.PlateCarree()}, figsize=(10, 10)
+    )
+
+    cmap = "RdBu"
+    cmap2 = "PiYG"
+
+    title_dict = {
+        "fontsize": "xx-large",
+        "fontweight": mpl.rcParams["axes.titleweight"],
+        "verticalalignment": "baseline",
+        "horizontalalignment": "center",
+    }
+
+    # plot the IC
+    era5_IC.plot.pcolormesh(
+        ax=axs[0, 0],
+        transform=ccrs.PlateCarree(),
+        cmap=cmap,
+        add_colorbar=False,
+        vmin=min_val,
+        vmax=max_val,
+    )
+    axs[0, 0].coastlines()
+    axs[0, 0].set_title(f"ERA5 IC ({print_time})", fontdict=title_dict)
+    gl = axs[0, 0].gridlines(draw_labels=True, linestyle="--")
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {"size": 12, "color": "white"}
+    gl.ylabel_style = {"size": 12, "color": "white"}
+
+    # plot the forecast
+    cropped_snapshot.plot.pcolormesh(
+        ax=axs[0, 1],
+        transform=ccrs.PlateCarree(),
+        cmap=cmap,
+        add_colorbar=False,
+        vmin=min_val,
+        vmax=max_val,
+    )
+    axs[0, 1].coastlines()
+    axs[0, 1].set_title("PanguWeather 96h Forecast", fontdict=title_dict)
+    gl2 = axs[0, 1].gridlines(draw_labels=True, linestyle="--")
+    gl2.top_labels = False
+    gl2.right_labels = False
+    gl2.xlabel_style = {"size": 12, "color": "white"}
+    gl2.ylabel_style = {"size": 12, "color": "white"}
+
+    # plot the truth
+    era5_snapshot.plot.pcolormesh(
+        ax=axs[1, 0],
+        transform=ccrs.PlateCarree(),
+        cmap=cmap,
+        add_colorbar=False,
+        vmin=min_val,
+        vmax=max_val,
+    )
+    axs[1, 0].coastlines()
+    axs[1, 0].set_title("ERA5 at t+96h", fontdict=title_dict)
+    gl3 = axs[1, 0].gridlines(draw_labels=True, linestyle="--")
+    gl3.top_labels = False
+    gl3.right_labels = False
+    gl3.xlabel_style = {"size": 12, "color": "white"}
+    gl3.ylabel_style = {"size": 12, "color": "white"}
+
+    # plot the difference
+    delta.plot.pcolormesh(
+        ax=axs[1, 1],
+        transform=ccrs.PlateCarree(),
+        cmap=cmap2,
+        add_colorbar=False,
+        vmin=delta.min().values,
+        vmax=delta.max().values,
+    )
+    axs[1, 1].coastlines()
+    axs[1, 1].set_title(
+        f"Difference, range: [{delta.min().values:.2f} , {delta.max().values:.2f} m/s]",
+        fontdict=title_dict,
+    )
+    gl4 = axs[1, 1].gridlines(draw_labels=True, linestyle="--")
+    gl4.top_labels = False
+    gl4.right_labels = False
+    gl4.xlabel_style = {"size": 12, "color": "white"}
+    gl4.ylabel_style = {"size": 12, "color": "white"}
+
+    fig.suptitle(f"Hurricane Dorian (2019)", fontsize="xx-large", color="white")
+
+    # Add a colorbar to the right of the plot, with white ticks and labels
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    norm = mpl.colors.Normalize(vmin=min_val, vmax=max_val)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+
+    fig.colorbar(sm, cax=cbar_ax, label="Wind Speed (m/s)")
+
+    # change the colorbar ticks to white
+    cbar_ax.yaxis.set_tick_params(color="white")
+    cbar_ax.yaxis.set_tick_params(color="white")
+
+    # change the colorbar label to white
+    cbar_ax.yaxis.label.set_color("white")
+
+    # change the colorbar ticklabels to white
+    plt.setp(plt.getp(cbar_ax.axes, "yticklabels"), color="white")
+
+    toolbox.plot_facecolors(fig=fig, axes=axs)
 
     # %%
     if False:

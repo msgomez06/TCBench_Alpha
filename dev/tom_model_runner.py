@@ -53,17 +53,13 @@ if __name__ == "__main__":
             # "6",
             # "--max_leadtime",
             # "24",
-            # "--use_gpu",
             # "--verbose",
             # "--reanalysis",
-            # "--mode",
-            # "probabilistic",
             "--cache_dir",
             "/scratch/mgomezd1/cache",
             # "/srv/scratch/mgomezd1/cache",
-            # "--mask",
+            "--mask",
             "--magAngle_mode",
-            "--dask_array",
         ]
     # %%
     # check if the context has been set for torch multiprocessing
@@ -71,7 +67,7 @@ if __name__ == "__main__":
         torch.multiprocessing.set_start_method("spawn", force=True)
 
     # Read in arguments with argparse
-    parser = argparse.ArgumentParser(description="Train an MLR model")
+    parser = argparse.ArgumentParser(description="Train a CNN model")
     parser.add_argument(
         "--datadir",
         type=str,
@@ -113,7 +109,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--deterministic_loss",
         type=str,
-        default="MSE",
+        default="RMSE",
     )
 
     parser.add_argument(
@@ -144,6 +140,12 @@ if __name__ == "__main__":
         "--max_leadtime",
         type=int,
         default=168,
+    )
+
+    parser.add_argument(
+        "--cnn_width",
+        type=str,
+        default="[32,64,128]",
     )
 
     parser.add_argument(
@@ -256,18 +258,17 @@ if __name__ == "__main__":
 
     train_arrays = list(train_zarr.array_keys())
     valid_arrays = list(valid_zarr.array_keys())
-    # %%
 
     # assert that AIX_masked, target_scaled, base_intensity_scaled, base_position, leadtime_scaled are in each group
     assert np.all(
         [
-            # "masked_AIX" in train_arrays,
+            "masked_AIX" in train_arrays,
             "target_scaled" in train_arrays,
             "base_intensity_scaled" in train_arrays,
             "base_position" in train_arrays,
             "leadtime_scaled" in train_arrays,
             "leadtime" in train_arrays,
-            # "masked_AIX" in valid_arrays,
+            "masked_AIX" in valid_arrays,
             "target_scaled" in valid_arrays,
             "base_intensity_scaled" in valid_arrays,
             "base_position" in valid_arrays,
@@ -281,10 +282,11 @@ if __name__ == "__main__":
         if args.mask:
             train_data = da.from_zarr(zarr_store, component="train/masked_AIX")
             valid_data = da.from_zarr(zarr_store, component="validation/masked_AIX")
-        else:
+        else:  # no mask
             train_data = da.from_zarr(zarr_store, component="train/AIX_scaled")
             valid_data = da.from_zarr(zarr_store, component="validation/AIX_scaled")
         train_target = da.from_zarr(zarr_store, component="train/target_scaled")
+
         valid_target = da.from_zarr(zarr_store, component="validation/target_scaled")
         train_leadtimes = da.from_zarr(zarr_store, component="train/leadtime_scaled")
         validation_leadtimes = da.from_zarr(
@@ -306,13 +308,9 @@ if __name__ == "__main__":
         )
     else:
         # load data with zarr
-        if args.mask:
-            train_data = train_zarr["masked_AIX"]
-            valid_data = valid_zarr["masked_AIX"]
-        else:
-            train_data = train_zarr["AIX_scaled"]
-            valid_data = valid_zarr["AIX_scaled"]
+        train_data = train_zarr["masked_AIX"]
         train_target = train_zarr["target_scaled"]
+        valid_data = valid_zarr["masked_AIX"]
         valid_target = valid_zarr["target_scaled"]
         train_leadtimes = train_zarr["leadtime_scaled"]
         validation_leadtimes = valid_zarr["leadtime_scaled"]
@@ -324,50 +322,6 @@ if __name__ == "__main__":
         validation_unscaled_leadtimes = valid_zarr["leadtime"]
 
     # %%
-    train_maxima = train_data.max(axis=(-2, -1)).compute(scheduler="threads")
-    train_minima = train_data.min(axis=(-2, -1)).compute(scheduler="threads")
-    valid_maxima = valid_data.max(axis=(-2, -1)).compute(scheduler="threads")
-    valid_minima = valid_data.min(axis=(-2, -1)).compute(scheduler="threads")
-
-    train_range = train_maxima - train_minima
-    valid_range = valid_maxima - valid_minima
-
-    # %%
-    train_leadtimes = train_leadtimes.compute(scheduler="threads")
-    validation_leadtimes = validation_leadtimes.compute(scheduler="threads")
-
-    train_base_intensity = train_base_intensity.compute(scheduler="threads")
-    valid_base_intensity = valid_base_intensity.compute(scheduler="threads")
-
-    # var order = ["W_mag", "W_dir", "mslp", "Z500", "T850"]
-
-    # %%
-    train_x = np.vstack(
-        [
-            train_maxima[:, 0],  # Maximum wind magnitude
-            train_minima[:, 2],  # Minimum mean sea level pressure
-            train_range[:, 0],  # Range of wind magnitude
-            train_range[:, 2],  # Range of mean sea level pressure
-            train_minima[:, 3],  # Minimum geopotential height at 500 hPa
-            train_range[:, 4],  # Range of temperature at 850 hPa
-            train_leadtimes.squeeze(),  # Leadtime
-            train_base_intensity.T,  # Base intensity
-        ]
-    ).T
-
-    valid_x = np.vstack(
-        [
-            valid_maxima[:, 0],  # Maximum wind magnitude
-            valid_minima[:, 2],  # Minimum mean sea level pressure
-            valid_range[:, 0],  # Range of wind magnitude
-            valid_range[:, 2],  # Range of mean sea level pressure
-            valid_minima[:, 3],  # Minimum geopotential height at 500 hPa
-            valid_range[:, 4],  # Range of temperature at 850 hPa
-            validation_leadtimes.squeeze(),  # Leadtime
-            valid_base_intensity.T,  # Base intensity
-        ]
-    ).T
-    # %%
     #  Dataloader & Hyperparameters
 
     # Let's define some hyperparameters
@@ -377,7 +331,7 @@ if __name__ == "__main__":
     if args.mode != "deterministic":
         loss_func = metrics.CRPS_ML
     else:
-        if args.deterministic_loss == "MSE":
+        if args.deterministic_loss == "RMSE":
             loss_func = torch.nn.MSELoss()
         elif args.deterministic_loss == "MAE":
             loss_func = torch.nn.L1Loss()
@@ -389,48 +343,80 @@ if __name__ == "__main__":
         if (calc_device == torch.device("cpu") and num_cores > 1)
         else num_cores
     )
-
-    # Make a dataloader for the training and validation data
-    train_dataset = torch.utils.data.TensorDataset(
-        torch.tensor(train_x, dtype=torch.float32),
-        torch.tensor(train_target.compute(scheduler="threads"), dtype=torch.float32),
+    # %%
+    # We then instantiate the DaskDataset class for the training and validation sets.
+    # Validation first because it's smaller and will be used to evaluate if the code
+    # is working as expected
+    print("Creating validation DaskDataset and dataloader...", flush=True)
+    validation_dataset = mlf.ZarrDatasetv2(
+        AI_X=valid_data,
+        base_int=valid_base_intensity,
+        target_data=valid_target,
+        device=calc_device,
+        num_workers=1,
+        track=valid_base_position,
+        leadtimes=validation_leadtimes,
     )
-
-    validation_dataset = torch.utils.data.TensorDataset(
-        torch.tensor(valid_x, dtype=torch.float32),
-        torch.tensor(valid_target.compute(scheduler="threads"), dtype=torch.float32),
-    )
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
-    )
-
-    validation_loader = torch.utils.data.DataLoader(
+    # %%
+    validation_loader = mlf.make_dataloader(
         validation_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=1,
+        # pin_memory=True,
     )
-
     # %%
-    # if emulate:
-    #     input("Press Enter to continue...")
+    print("Creating training DaskDataset and dataloader...", flush=True)
+    train_dataset = mlf.ZarrDatasetv2(
+        AI_X=train_data,
+        base_int=train_base_intensity,
+        target_data=train_target,
+        device=calc_device,
+        num_workers=1,
+        track=train_base_position,
+        leadtimes=train_leadtimes,
+    )
+    # %%
+    train_loader = mlf.make_dataloader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=1,
+        # pin_memory=True,
+    )
+    # %%
+    if emulate:
+        input("Press Enter to continue...")
     #  Model
     # We begin by instantiating our baseline model
-    MLR = baselines.TorchMLRv2(
+    CNN = baselines.RegularizedCNN(
         deterministic=True if args.mode == "deterministic" else False,
-        num_scalars=train_x.shape[1],
+        num_scalars=train_dataset.num_scalars,
+        input_cols=5 - len(json.loads(args.ablate_cols)),
+        cnn_widths=json.loads(args.cnn_width),
+        fc_width=args.fc_width,
+        dropout=args.dropout,
+        dropout2d=args.dropout,
+        aux_loss=args.aux_loss,
     )
-    MLR.to(calc_device)
+    CNN.to(calc_device)
+    # CNN = baselines.SimpleCNN(
+    #     deterministic=True if args.mode == "deterministic" else False,
+    #     num_scalars=train_dataset.num_scalars,
+    #     input_cols=5 - len(json.loads(args.ablate_cols)),
+    #     cnn_widths=json.loads(args.cnn_width),
+    #     fc_width=args.fc_width,
+    #     aux_loss=args.aux_loss,
+    # ).to(calc_device)
 
-    optimizer = torch.optim.Adam(MLR.parameters(), lr=1e-4)  # , weight_decay=1e-4)
-    # scheduler = torch.optim.lr_scheduler.CyclicLR(
-    #     optimizer, base_lr=1e-5, max_lr=1e-3, step_size_up=10
-    # )
+    optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-4)  # , weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CyclicLR(
+        optimizer, base_lr=1e-5, max_lr=1e-3, step_size_up=10
+    )
 
-    num_epochs = 40
-    patience = 3  # stop if validation loss increases for patience epochs
-    bias_threshold = 10  # stop if validation loss / train loss > bias_threshold
+    num_epochs = 100
+    patience = 15  # stop if validation loss increases for patience epochs
+    bias_threshold = 30  # stop if validation loss / train loss > bias_threshold
 
     #  Training
     train_losses = []
@@ -450,35 +436,52 @@ if __name__ == "__main__":
             train_aux_loss = 0
         i = 0
         print("\nTraining:", flush=True)
-        for x, y in train_loader:
+        for AI_X, scalars, target in train_loader:
             i += 1
             optimizer.zero_grad()
 
-            prediction = MLR(x=x)
+            # batch_data = AI_X.to(calc_device)
+            # batch_scalars = scalars.to(calc_device)
+            # prediction = CNN(
+            #     x=batch_data,
+            #     scalars=batch_scalars,
+            # )
+            # print(AI_X.device, scalars.device)
 
-            # if args.aux_loss:
-            #     base_loss = loss_func(
-            #         prediction[:, : CNN.target_size],
-            #         target,
-            #     )
-            #     aux_loss = loss_func(
-            #         prediction[:, CNN.target_size :],
-            #         base_loss,
-            #     )
-            #     batch_loss = base_loss + aux_loss
+            # convert to float32
+            AI_X = AI_X.float()
+            scalars = scalars.float()
+            target = target.float()
 
-            # else:
-            #     batch_loss = loss_func(prediction, target)
-            batch_loss = loss_func(prediction, y)
+            AI_X = AI_X.to(calc_device)
+            scalars = scalars.to(calc_device)
+            target = target.to(calc_device)
+            # print(AI_X.device, scalars.device)
+
+            prediction = CNN(x=AI_X, scalars=scalars)
+
+            if args.aux_loss:
+                base_loss = loss_func(
+                    prediction[:, : CNN.target_size],
+                    target,
+                )
+                aux_loss = loss_func(
+                    prediction[:, CNN.target_size :],
+                    base_loss,
+                )
+                batch_loss = base_loss + aux_loss
+
+            else:
+                batch_loss = loss_func(prediction, target)
 
             batch_loss.backward()
 
             optimizer.step()
 
             train_loss += batch_loss.item()
-            # if args.aux_loss:
-            #     train_base_loss += base_loss.item()
-            #     train_aux_loss += aux_loss.item()
+            if args.aux_loss:
+                train_base_loss += base_loss.item()
+                train_aux_loss += aux_loss.item()
 
             # print a simple progress bar that shows a dot for each percent of the batch
             print(
@@ -487,15 +490,16 @@ if __name__ == "__main__":
                     + f"{i}/{len(train_loader)}"
                     + "." * int(20 * i / len(train_loader))
                     + f" Batch loss: {batch_loss.item():.4f}"
-                    # + (
-                    #     ""
-                    #     if not args.aux_loss
-                    #     else f" Base loss: {base_loss.item():.4f}, Aux loss: {aux_loss.item():.4f}"
-                    # )
+                    + (
+                        ""
+                        if not args.aux_loss
+                        else f" Base loss: {base_loss.item():.4f}, Aux loss: {aux_loss.item():.4f}"
+                    )
                 ),
                 end="",
                 flush=True,
             )
+        scheduler.step()
 
         train_loss = train_loss / len(train_loader)
         train_losses.append(train_loss)
@@ -512,29 +516,46 @@ if __name__ == "__main__":
             val_aux_loss = 0
         i = 0
         with torch.no_grad():
-            for x, y in validation_loader:
+            for AI_X, scalars, target in validation_loader:
+                # print(
+                #     f"\r {AI_X.dtype} {scalars.dtype} {target.dtype}",
+                #     end="",
+                #     flush=True,
+                # )
                 i += 1
-                prediction = MLR(x=x)
+                # batch_data = AI_X.to(calc_device)
+                # batch_scalars = scalars.to(calc_device)
+                # prediction = CNN(
+                #     x=batch_data,
+                #     scalars=batch_scalars,
+                # )
 
-                # if args.aux_loss:
-                #     base_loss = loss_func(
-                #         prediction[:, : CNN.target_size],
-                #         target,
-                #     )
-                #     aux_loss = loss_func(
-                #         prediction[:, CNN.target_size :],
-                #         base_loss,
-                #     )
-                #     batch_loss = base_loss + aux_loss
-                # else:
-                #     batch_loss = loss_func(prediction, target)
+                AI_X = AI_X.float()
+                scalars = scalars.float()
+                target = target.float()
 
-                batch_loss = loss_func(prediction, y)
+                AI_X = AI_X.to(calc_device)
+                scalars = scalars.to(calc_device)
+                target = target.to(calc_device)
+                prediction = CNN(x=AI_X, scalars=scalars)
+
+                if args.aux_loss:
+                    base_loss = loss_func(
+                        prediction[:, : CNN.target_size],
+                        target,
+                    )
+                    aux_loss = loss_func(
+                        prediction[:, CNN.target_size :],
+                        base_loss,
+                    )
+                    batch_loss = base_loss + aux_loss
+                else:
+                    batch_loss = loss_func(prediction, target)
 
                 val_loss += batch_loss.item()
-                # if args.aux_loss:
-                #     val_base_loss += base_loss.item()
-                #     val_aux_loss += aux_loss.item()
+                if args.aux_loss:
+                    val_base_loss += base_loss.item()
+                    val_aux_loss += aux_loss.item()
 
                 # print a simple progress bar that shows a dot for each percent of the batch
                 print(
@@ -542,72 +563,15 @@ if __name__ == "__main__":
                         "\r"
                         + f"{i}/{len(validation_loader)}"
                         + "." * int(20 * i / len(validation_loader))
-                        # + (
-                        #     ""
-                        #     if not args.aux_loss
-                        #     else f" Base loss: {base_loss.item():.4f}, Aux loss: {aux_loss.item():.4f}"
-                        # )
+                        + (
+                            ""
+                            if not args.aux_loss
+                            else f" Base loss: {base_loss.item():.4f}, Aux loss: {aux_loss.item():.4f}"
+                        )
                     ),
                     end="",
                     flush=True,
                 )
-
-            # for AI_X, scalars, target in validation_loader:
-            #     # print(
-            #     #     f"\r {AI_X.dtype} {scalars.dtype} {target.dtype}",
-            #     #     end="",
-            #     #     flush=True,
-            #     # )
-            #     i += 1
-            #     # batch_data = AI_X.to(calc_device)
-            #     # batch_scalars = scalars.to(calc_device)
-            #     # prediction = CNN(
-            #     #     x=batch_data,
-            #     #     scalars=batch_scalars,
-            #     # )
-
-            #     AI_X = AI_X.float()
-            #     scalars = scalars.float()
-            #     target = target.float()
-
-            #     AI_X = AI_X.to(calc_device)
-            #     scalars = scalars.to(calc_device)
-            #     target = target.to(calc_device)
-            #     prediction = CNN(x=AI_X, scalars=scalars)
-
-            #     if args.aux_loss:
-            #         base_loss = loss_func(
-            #             prediction[:, : CNN.target_size],
-            #             target,
-            #         )
-            #         aux_loss = loss_func(
-            #             prediction[:, CNN.target_size :],
-            #             base_loss,
-            #         )
-            #         batch_loss = base_loss + aux_loss
-            #     else:
-            #         batch_loss = loss_func(prediction, target)
-
-            #     val_loss += batch_loss.item()
-            #     if args.aux_loss:
-            #         val_base_loss += base_loss.item()
-            #         val_aux_loss += aux_loss.item()
-
-            #     # print a simple progress bar that shows a dot for each percent of the batch
-            #     print(
-            #         (
-            #             "\r"
-            #             + f"{i}/{len(validation_loader)}"
-            #             + "." * int(20 * i / len(validation_loader))
-            #             + (
-            #                 ""
-            #                 if not args.aux_loss
-            #                 else f" Base loss: {base_loss.item():.4f}, Aux loss: {aux_loss.item():.4f}"
-            #             )
-            #         ),
-            #         end="",
-            #         flush=True,
-            #     )
 
         val_loss = val_loss / len(validation_loader)
         val_losses.append(val_loss)
@@ -620,10 +584,10 @@ if __name__ == "__main__":
         # Save if the validation loss is the best so far
         if val_loss <= max(val_losses):
             torch.save(
-                MLR,
+                CNN,
                 os.path.join(
                     result_dir,
-                    f"best_model_{str(MLR)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}.pt",
+                    f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}_{args.cnn_width}.pt",
                 ),
             )
 
@@ -655,7 +619,7 @@ if __name__ == "__main__":
         with open(
             os.path.join(
                 result_dir,
-                f"MLR_{str(MLR)}_losses_{start_time}_{args.ai_model}_{args.mode}.pkl",
+                f"CNN_{str(CNN)}_losses_{start_time}_{args.ai_model}_{args.mode}_{args.cnn_width}.pkl",
             ),
             "wb",
         ) as f:
@@ -685,9 +649,8 @@ if __name__ == "__main__":
         toolbox.plot_facecolors(fig=fig, axes=ax)
         fig.savefig(
             os.path.join(
-                result_dir, f"MLR_{str(MLR)}_{args.ai_model}_losses_{start_time}.png"
+                result_dir, f"CNN_{str(CNN)}_{args.ai_model}_losses_{start_time}.png"
             )
         )
-        plt.close(fig)
 
     # %%

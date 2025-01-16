@@ -296,6 +296,7 @@ if __name__ == "__main__":
         np.array([50, 50, 50]) / 255,
     ]
 
+    # Plot the displacement percentiles
     fig, axes = plt.subplots(3, 3, figsize=(15, 15), dpi=150)
     axes = axes.flatten()
     for i, ax in enumerate(axes):
@@ -315,6 +316,53 @@ if __name__ == "__main__":
         ax.set_title(f"{q[i]}th Percentile Displacements")
         ax.set_xlabel("Leadtime (hours)")
         ax.set_ylabel("Displacement (km)")
+        ax.legend()
+    toolbox.plot_facecolors(fig=fig, axes=axes)
+#%%
+    # Plot the delta lon percentiles
+    fig, axes = plt.subplots(3, 3, figsize=(15, 15), dpi=150)
+    axes = axes.flatten()
+    for i, ax in enumerate(axes):
+        ax.plot(
+            leadtimes,
+            delta_lon_percentiles[:, i],
+            label=f"{q[i]}th percentile",
+            color=colors[2],
+        )
+
+        # plot the line defined by the mean speed
+        x = np.linspace(0, 168, 100)
+        y = mean_lon_speed * x
+
+        ax.plot(x, y, color=colors[3], label="Mean change in Longitude")
+
+        ax.set_title(f"{q[i]}th Percentile Delta Longitude")
+        ax.set_xlabel("Leadtime (hours)")
+        ax.set_ylabel("Delta Longitude (degrees)")
+        ax.legend()
+    toolbox.plot_facecolors(fig=fig, axes=axes)
+
+    # Plot the delta lat percentiles
+    fig, axes = plt.subplots(3, 3, figsize=(15, 15), dpi=150)
+    axes = axes.flatten()
+    
+    for i, ax in enumerate(axes):
+        ax.plot(
+            leadtimes,
+            delta_lat_percentiles[:, i],
+            label=f"{q[i]}th percentile",
+            color=colors[2],
+        )
+
+        # plot the line defined by the mean speed
+        x = np.linspace(0, 168, 100)
+        y = mean_lat_speed * x
+
+        ax.plot(x, y, color=colors[3], label="Mean change in Latitude")
+
+        ax.set_title(f"{q[i]}th Percentile Delta Latitude")
+        ax.set_xlabel("Leadtime (hours)")
+        ax.set_ylabel("Delta Latitude (degrees)")
         ax.legend()
     toolbox.plot_facecolors(fig=fig, axes=axes)
 

@@ -805,7 +805,9 @@ class SimpleCNN(nn.Module):
         self.paddings = kwargs.get("paddings", [1, 1, 1])
         input_cols = kwargs.get("input_cols", 5)
         target_size = kwargs.get("target_size", 2)
+        batch_norm = kwargs.get("batch_norm", True)
 
+        self.bn = batch_norm
         self.target_size = target_size
         # Output size = (input_size - kernel_size + 2*padding) / stride + 1
         # after pooling output size = output_size / (pool_size * pool_stride)
@@ -817,6 +819,7 @@ class SimpleCNN(nn.Module):
             stride=self.strides[0],
             padding=self.paddings[0],
         )
+        self.bn1 = nn.BatchNorm2d(cnn_widths[0]) if batch_norm else None
         self.size = (
             self.size - self.kernel_size[0] + 2 * self.paddings[0]
         ) / self.strides[0] + 1
@@ -829,6 +832,7 @@ class SimpleCNN(nn.Module):
             stride=self.strides[1],
             padding=self.paddings[1],
         )
+        self.bn2 = nn.BatchNorm2d(cnn_widths[1]) if batch_norm else None
         self.size = (
             self.size - self.kernel_size[1] + 2 * self.paddings[1]
         ) / self.strides[1] + 1
@@ -842,6 +846,7 @@ class SimpleCNN(nn.Module):
             stride=self.strides[2],
             padding=self.paddings[2],
         )
+        self.bn3 = nn.BatchNorm2d(cnn_widths[2]) if batch_norm else None
         self.size = (
             self.size - self.kernel_size[2] + 2 * self.paddings[2]
         ) / self.strides[2] + 1
@@ -862,9 +867,21 @@ class SimpleCNN(nn.Module):
         self.fc4 = nn.Linear(fc_width + num_scalars * 8, self.num_outputs)
 
     def forward(self, x, scalars):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = self.pool(F.relu(self.conv3(x)))
+        x = (
+            self.pool(self.bn1(F.relu(self.conv1(x))))
+            if self.bn
+            else self.pool(F.relu(self.conv1(x)))
+        )
+        x = (
+            self.pool(self.bn2(F.relu(self.conv2(x))))
+            if self.bn
+            else self.pool(F.relu(self.conv2(x)))
+        )
+        x = (
+            self.pool(self.bn3(F.relu(self.conv3(x))))
+            if self.bn
+            else self.pool(F.relu(self.conv3(x)))
+        )
         x = x.view(-1, self.flat_size)
         x = F.relu(self.fc1(x))
         scalars = F.relu(self.fc2(scalars))
@@ -881,13 +898,31 @@ class RegularizedCNN(SimpleCNN):
 
     def __init__(self, num_scalars, fc_width=512, cnn_widths=[32, 64, 128], **kwargs):
         super().__init__(num_scalars, fc_width, cnn_widths, **kwargs)
-        self.dropout2d = kwargs.get("dropout2d", 0.25)
-        self.dropout = kwargs.get("dropout", 0.25)
+        self.dropout2d = kwargs.get("dropout2d", 0.5)
+        self.dropout = kwargs.get("dropout", 0.5)
 
     def forward(self, x, scalars):
-        x = F.dropout2d(self.pool(F.hardswish(self.conv1(x))), p=self.dropout2d)
-        x = F.dropout2d(self.pool(F.hardswish(self.conv2(x))), p=self.dropout2d)
-        x = F.dropout2d(self.pool(F.hardswish(self.conv3(x))), p=self.dropout2d)
+        x = (
+            F.dropout2d(
+                self.pool(self.bn1(F.hardswish(self.conv1(x)))), p=self.dropout2d
+            )
+            if self.bn
+            else F.dropout2d(self.pool(F.hardswish(self.conv1(x))), p=self.dropout2d)
+        )
+        x = (
+            F.dropout2d(
+                self.pool(self.bn2(F.hardswish(self.conv2(x)))), p=self.dropout2d
+            )
+            if self.bn
+            else F.dropout2d(self.pool(F.hardswish(self.conv2(x))), p=self.dropout2d)
+        )
+        x = (
+            F.dropout2d(
+                self.pool(self.bn3(F.hardswish(self.conv3(x)))), p=self.dropout2d
+            )
+            if self.bn
+            else F.dropout2d(self.pool(F.hardswish(self.conv3(x))), p=self.dropout2d)
+        )
         x = x.view(-1, self.flat_size)
         x = F.dropout(F.hardswish(self.fc1(x)), p=self.dropout)
         scalars = F.dropout(F.hardswish(self.fc2(scalars)), p=self.dropout)
@@ -897,6 +932,185 @@ class RegularizedCNN(SimpleCNN):
         if scalars.dim() == 1:
             scalars = scalars.unsqueeze(0)
         # Concatenate the base intensity with the output of the dense layer
+        x = torch.cat([x, scalars], dim=1)
+        x = self.fc4(x)
+        return x
+
+
+# %%
+# UNet written with ChatGPT:
+class UNet(nn.Module):
+    def __str__(self):
+        return "UNet"
+
+    def __init__(self, num_scalars, fc_width=512, cnn_widths=[32, 64, 128], **kwargs):
+        super(UNet, self).__init__()
+        self.pool_size = kwargs.get("pool_size", 2)
+        self.pool_stride = kwargs.get("pool_stride", 2)
+        self.kernel_size = kwargs.get("kernel_size", [3, 3, 3])
+        self.strides = kwargs.get("strides", [1, 1, 1])
+        self.paddings = kwargs.get("paddings", [1, 1, 1])
+        input_cols = kwargs.get("input_cols", 5)
+        target_size = kwargs.get("target_size", 2)
+        batch_norm = kwargs.get("batch_norm", True)
+        self.dropout2d = kwargs.get("dropout2d", 0.5)
+        self.dropout = kwargs.get("dropout", 0.5)
+
+        self.bn = batch_norm
+        self.target_size = target_size
+
+        # Encoder
+        self.enc1 = self._conv_block(
+            input_cols,
+            cnn_widths[0],
+            self.kernel_size[0],
+            self.strides[0],
+            self.paddings[0],
+        )
+        self.enc2 = self._conv_block(
+            cnn_widths[0],
+            cnn_widths[1],
+            self.kernel_size[1],
+            self.strides[1],
+            self.paddings[1],
+        )
+        self.enc3 = self._conv_block(
+            cnn_widths[1],
+            cnn_widths[2],
+            self.kernel_size[2],
+            self.strides[2],
+            self.paddings[2],
+        )
+
+        self.pool = nn.MaxPool2d(kernel_size=self.pool_size, stride=self.pool_stride)
+
+        # Bottleneck
+        self.bottleneck = self._conv_block(
+            cnn_widths[2],
+            cnn_widths[2] * 2,
+            self.kernel_size[-1],
+            self.strides[-1],
+            self.paddings[-1],
+        )
+
+        # Decoder
+        self.upconv3 = nn.ConvTranspose2d(
+            cnn_widths[2] * 2, cnn_widths[2], kernel_size=2, stride=2
+        )
+        self.dec3 = self._conv_block(
+            cnn_widths[2],
+            cnn_widths[2],
+            self.kernel_size[2],
+            self.strides[2],
+            self.paddings[2],
+        )
+
+        self.upconv2 = nn.ConvTranspose2d(
+            cnn_widths[2], cnn_widths[1], kernel_size=2, stride=2
+        )
+        self.dec2 = self._conv_block(
+            cnn_widths[1],
+            cnn_widths[1],
+            self.kernel_size[1],
+            self.strides[1],
+            self.paddings[1],
+        )
+
+        self.upconv1 = nn.ConvTranspose2d(
+            cnn_widths[1], cnn_widths[0], kernel_size=2, stride=2
+        )
+        self.dec1 = self._conv_block(
+            cnn_widths[0],
+            cnn_widths[0],
+            self.kernel_size[0],
+            self.strides[0],
+            self.paddings[0],
+        )
+
+        # Fully connected layers for scalars
+        self.fc1 = nn.Linear(cnn_widths[0] * 241 * 241, fc_width)
+        self.fc2 = nn.Linear(num_scalars, num_scalars * 8)
+        self.fc3 = nn.Linear(num_scalars * 8, num_scalars * 8)
+
+        self.num_outputs = self.target_size * (
+            1 if kwargs.get("deterministic", False) else 2
+        ) + (self.target_size if kwargs.get("aux_loss", False) else 0)
+
+        self.fc4 = nn.Linear(fc_width + num_scalars * 8, self.num_outputs)
+
+    def _conv_block(self, in_channels, out_channels, kernel_size, stride, padding):
+        layers = [
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+            ),
+            nn.BatchNorm2d(out_channels) if self.bn else nn.Identity(),
+            nn.ReLU(inplace=True),
+        ]
+        return nn.Sequential(*layers)
+
+    def forward(self, x, scalars):
+        # Encoder
+        enc1 = F.dropout2d(self.enc1(x), p=self.dropout2d)
+        x = self.pool(enc1)
+        enc2 = F.dropout2d(self.enc2(x), p=self.dropout2d)
+        x = self.pool(enc2)
+        enc3 = F.dropout2d(self.enc3(x), p=self.dropout2d)
+        x = self.pool(enc3)
+
+        # Bottleneck
+        x = F.dropout2d(self.bottleneck(x), p=self.dropout2d)
+
+        # # Decoder
+        # x = self.upconv3(x)
+        # x = torch.cat([x, enc3], dim=1)
+        # x = self.dec3(x)
+
+        # x = self.upconv2(x)
+        # x = torch.cat([x, enc2], dim=1)
+        # x = self.dec2(x)
+
+        # x = self.upconv1(x)
+        # x = torch.cat([x, enc1], dim=1)
+        # x = self.dec1(x)
+
+        # Decoder
+        x = self.upconv3(x)
+        if x.size() != enc3.size():
+            x = F.interpolate(
+                x, size=enc3.size()[2:], mode="bilinear", align_corners=False
+            )
+        x = x + enc3  # Residual connection
+        x = self.dec3(x)
+
+        x = self.upconv2(x)
+        if x.size() != enc2.size():
+            x = F.interpolate(
+                x, size=enc2.size()[2:], mode="bilinear", align_corners=False
+            )
+        x = x + enc2  # Residual connection
+        x = self.dec2(x)
+
+        x = self.upconv1(x)
+        if x.size() != enc1.size():
+            x = F.interpolate(
+                x, size=enc1.size()[2:], mode="bilinear", align_corners=False
+            )
+        x = x + enc1  # Residual connection
+        x = self.dec1(x)
+
+        # Flatten for FC layer
+        x = torch.flatten(x, 1)
+        x = F.relu(self.fc1(x))
+
+        # Scalar processing
+        scalars = F.relu(self.fc2(scalars))
+        scalars = torch.squeeze(F.dropout(F.relu(self.fc3(scalars)), p=self.dropout))
+
+        # Concatenate and final FC layer
         x = torch.cat([x, scalars], dim=1)
         x = self.fc4(x)
         return x
@@ -957,6 +1171,28 @@ class TorchMLRv2(nn.Module):
         # Concatenate the max and min values with the scalar inputs
         x = self.linear(x)
         return x
+
+
+class AveClimatology:
+    def __str__(self):
+        return "TCBench Average Climatology Baseline"
+
+    def __init__(self, **kwargs):
+        self.name = "Ave Climatology"
+        self.mu = {}
+        self.sigma = {}
+
+    def fit(self, target, leadtimes):
+        unique_leadtimes = np.unique(leadtimes)
+        for leadtime in unique_leadtimes:
+            mask = leadtimes == leadtime
+            self.mu[leadtime] = target[mask].mean(axis=0)
+            self.sigma[leadtime] = target[mask].std(axis=0)
+
+    def predict(self, leadtimes):
+        mu = np.array([self.mu[leadtime] for leadtime in leadtimes])
+        sigma = np.array([self.sigma[leadtime] for leadtime in leadtimes])
+        return np.vstack([mu, sigma]).T
 
 
 # %%

@@ -56,7 +56,7 @@ if __name__ == "__main__":
             "--cache_dir",
             "/scratch/mgomezd1/cache",
             "--mask",
-            # "--magAngle_mode",
+            "--magAngle_mode",
         ]
     # %%
     # check if the context has been set for torch multiprocessing

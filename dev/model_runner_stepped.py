@@ -41,7 +41,7 @@ def transform_data(data, scaler):
 # %%
 if __name__ == "__main__":
     # emulate system arguments
-    emulate = False
+    emulate = True
     # Simulate command line arguments
     if emulate:
         sys.argv = [
@@ -61,6 +61,8 @@ if __name__ == "__main__":
             # "/srv/scratch/mgomezd1/cache",
             "--mask",
             "--magAngle_mode",
+            "--algorithm",
+            "UNet",
         ]
     # %%
     # check if the context has been set for torch multiprocessing
@@ -215,10 +217,22 @@ if __name__ == "__main__":
         help="Whether to use dask arrays for the dataset",
     )
 
+    parser.add_argument(
+        "--algorithm",
+        type=str,
+        default="CNN",
+    )
+
+    parser.add_argument(
+        "--l1_reg",
+        type=float,
+        default=0.0,
+    )
+
     args = parser.parse_args()
 
     print("Imports successful", flush=True)
-
+    # %%
     # print the multiprocessing start method
     print(torch.multiprocessing.get_start_method(allow_none=True))
     dask.config.set(scheduler="processes")
@@ -277,6 +291,54 @@ if __name__ == "__main__":
             "leadtime" in valid_arrays,
         ]
     ), "Missing Data in the cache"
+
+    # if args.dask_array:
+    #     # Load the data from the zarr store using dask array
+    #     if args.mask:
+    #         train_data = da.from_zarr(zarr_store, component="train/masked_AIX")
+    #         valid_data = da.from_zarr(zarr_store, component="validation/masked_AIX")
+    #     else:
+    #         train_data = da.from_zarr(zarr_store, component="train/AIX_scaled")
+    #         valid_data = da.from_zarr(zarr_store, component="validation/AIX_scaled")
+    #     train_target = da.from_zarr(zarr_store, component="train/target_scaled")
+
+    #     valid_target = da.from_zarr(zarr_store, component="validation/target_scaled")
+    #     train_leadtimes = da.from_zarr(zarr_store, component="train/leadtime_scaled")
+    #     validation_leadtimes = da.from_zarr(
+    #         zarr_store, component="validation/leadtime_scaled"
+    #     )
+    #     train_base_intensity = da.from_zarr(
+    #         zarr_store, component="train/base_intensity_scaled"
+    #     )
+    #     valid_base_intensity = da.from_zarr(
+    #         zarr_store, component="validation/base_intensity_scaled"
+    #     )
+    #     train_base_position = da.from_zarr(zarr_store, component="train/base_position")
+    #     valid_base_position = da.from_zarr(
+    #         zarr_store, component="validation/base_position"
+    #     )
+    #     train_unscaled_leadtimes = da.from_zarr(zarr_store, component="train/leadtime")
+    #     validation_unscaled_leadtimes = da.from_zarr(
+    #         zarr_store, component="validation/leadtime"
+    #     )
+    # else:
+    #     # load data with zarr
+    #     if args.mask:
+    #         train_data = train_zarr["masked_AIX"]
+    #         valid_data = valid_zarr["masked_AIX"]
+    #     else:
+    #         train_data = train_zarr["AIX_scaled"]
+    #         valid_data = valid_zarr["AIX_scaled"]
+    #     train_target = train_zarr["target_scaled"]
+    #     valid_target = valid_zarr["target_scaled"]
+    #     train_leadtimes = train_zarr["leadtime_scaled"]
+    #     validation_leadtimes = valid_zarr["leadtime_scaled"]
+    #     train_base_intensity = train_zarr["base_intensity_scaled"]
+    #     valid_base_intensity = valid_zarr["base_intensity_scaled"]
+    #     train_base_position = train_zarr["base_position"]
+    #     valid_base_position = valid_zarr["base_position"]
+    #     train_unscaled_leadtimes = train_zarr["leadtime"]
+    #     validation_unscaled_leadtimes = valid_zarr["leadtime"]
 
     if args.dask_array:
         # Load the data from the zarr store using dask array
@@ -409,10 +471,20 @@ if __name__ == "__main__":
     )
 
     # %% Define model and its training hyperparameters
+    if args.algorithm == "CNN":
+        modelClass = baselines.RegularizedCNN
+    elif args.algorithm == "SimpleCNN":
+        modelClass = baselines.SimpleCNN
+    elif args.algorithm == "UNet":
+        modelClass = baselines.UNet
+    else:
+        raise ValueError("Model not recognized.")
 
+    print(f"Training {modelClass} model...", flush=True)
+    # %%
     #  Model
     # We begin by instantiating our baseline model
-    CNN = baselines.RegularizedCNN(
+    CNN = modelClass(
         deterministic=True if args.mode == "deterministic" else False,
         num_scalars=train_dataset.num_scalars,
         input_cols=5 - len(json.loads(args.ablate_cols)),
@@ -423,22 +495,17 @@ if __name__ == "__main__":
         aux_loss=args.aux_loss,
     )
     CNN.to(calc_device)
-    # CNN = baselines.SimpleCNN(
-    #     deterministic=True if args.mode == "deterministic" else False,
-    #     num_scalars=train_dataset.num_scalars,
-    #     input_cols=5 - len(json.loads(args.ablate_cols)),
-    #     cnn_widths=json.loads(args.cnn_width),
-    #     fc_width=args.fc_width,
-    #     aux_loss=args.aux_loss,
-    # ).to(calc_device)
+    CNN.tags = [str(CNN), args.ai_model, args.mode, args.dropout]
+    CNN.savetag = f"{args.ai_model}-{args.mode}"
+    CNN.kwargs = args
 
-    optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-4)  # , weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CyclicLR(
-        optimizer, base_lr=1e-5, max_lr=1e-3, step_size_up=10
-    )
+    optimizer = torch.optim.Adam(CNN.parameters(), lr=1e-4, weight_decay=args.l1_reg)
+    # scheduler = torch.optim.lr_scheduler.CyclicLR(
+    #     optimizer, base_lr=1e-5, max_lr=1e-3, step_size_up=10
+    # )
 
-    num_epochs = 100
-    patience = 10  # stop if validation loss increases for patience epochs
+    num_epochs = 30
+    patience = 5  # stop if validation loss increases for patience epochs
     bias_threshold = 30  # stop if validation loss / train loss > bias_threshold
 
     # %%
@@ -507,14 +574,6 @@ if __name__ == "__main__":
                 i += 1
                 optimizer.zero_grad()
 
-                # batch_data = AI_X.to(calc_device)
-                # batch_scalars = scalars.to(calc_device)
-                # prediction = CNN(
-                #     x=batch_data,
-                #     scalars=batch_scalars,
-                # )
-                # print(AI_X.device, scalars.device)
-
                 # convert to float32
                 AI_X = AI_X.float()
                 scalars = scalars.float()
@@ -566,7 +625,7 @@ if __name__ == "__main__":
                     end="",
                     flush=True,
                 )
-            scheduler.step()
+            # scheduler.step()
 
             train_loss = train_loss / len(train_loader)
             train_losses.append(train_loss)
@@ -650,11 +709,18 @@ if __name__ == "__main__":
 
             # Save if the validation loss is the best so far
             if val_loss <= max(val_losses):
+                # torch.save(
+                #     CNN,
+                #     os.path.join(
+                #         result_dir,
+                #         f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}_{args.cnn_width}.pt",
+                #     ),
+                # )
                 torch.save(
                     CNN,
                     os.path.join(
                         result_dir,
-                        f"best_model_{str(CNN)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}_{args.cnn_width}.pt",
+                        f"{str(CNN.tags[0])}_{start_time}_epoch-{epoch+1}_{CNN.savetag}.pt",
                     ),
                 )
 
@@ -683,10 +749,11 @@ if __name__ == "__main__":
                 losses["train_aux"] = train_aux_losses
                 losses["validation_base"] = val_base_losses
                 losses["validation_aux"] = val_aux_losses
+
             with open(
                 os.path.join(
                     result_dir,
-                    f"CNN_{str(CNN)}_losses_{start_time}_{args.ai_model}_{args.mode}_{args.cnn_width}.pkl",
+                    f"{CNN.tags[0]}_losses_{start_time}_step-{idx}.pkl",
                 ),
                 "wb",
             ) as f:
@@ -715,9 +782,14 @@ if __name__ == "__main__":
         ax.set_ylabel(f"Loss: {str(loss_func)}")
         ax.legend()
         toolbox.plot_facecolors(fig=fig, axes=ax)
+        # fig.savefig(
+        #     os.path.join(
+        #         result_dir, f"CNN_{str(CNN)}_{args.ai_model}_losses_{start_time}.png"
+        #     )
+        # )
         fig.savefig(
             os.path.join(
-                result_dir, f"CNN_{str(CNN)}_{args.ai_model}_losses_{start_time}.png"
+                result_dir, f"{CNN.tags[0]}_losses_{start_time}_step-{idx}.png"
             )
         )
 

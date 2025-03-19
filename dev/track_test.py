@@ -32,67 +32,129 @@ import cartopy.feature as cfeature
 full_data = toolbox.read_hist_track_file(
     tracks_path="/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/tracks/ibtracs/"
 )
-# %%
-data = full_data[full_data.ISO_TIME.dt.year == 2019]
-storm = data[data.NAME == "DORIAN"]
+results_dir = (
+    "/work/FAC/FGSE/IDYST/tbeucler/default/milton/repos/alpha_bench/dev/results/"
+)
 
 # %%
 if __name__ == "__main__":
-    track = toolbox.tc_track(
-        UID=storm.SID.iloc[0],
-        NAME=storm.NAME.iloc[0],
-        track=storm[["LAT", "LON"]].to_numpy(),
-        timestamps=storm.ISO_TIME.to_numpy(),
-        ALT_ID=storm[constants.ibtracs_cols._track_cols__metadata.get("ALT_ID")].iloc[
-            0
-        ],
-        wind=storm[constants.ibtracs_cols._track_cols__metadata.get("WIND")].to_numpy(),
-        pres=storm[constants.ibtracs_cols._track_cols__metadata.get("PRES")].to_numpy(),
-        datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
-        storm_season=storm.SEASON.iloc[0],
-        ai_model="panguweather",
-    )
+    initial_times = []
+    for name, year in [
+        ("DORIAN", 2019),
+        ("KATRINA", 2005),
+        ("HAITANG", 2005),
+        ("HARVEY", 2017),
+        ("TITLI", 2018),
+        ("VARDAH", 2016),
+        ("MARIA", 2017),
+        ("WILMA", 2011),
+        ("HAIYAN", 2013),
+        ("PAM", 2015),
+        ("ENAWO", 2017),
+        ("KENNETH", 2011),
+    ]:
+        print(f"Processing {name} {year}")
+        data = full_data[full_data.ISO_TIME.dt.year == year]
+        storm = data[data.NAME == name]
+        track = toolbox.tc_track(
+            UID=storm.SID.iloc[0],
+            NAME=storm.NAME.iloc[0],
+            track=storm[["LAT", "LON"]].to_numpy(),
+            timestamps=storm.ISO_TIME.to_numpy(),
+            ALT_ID=storm[
+                constants.ibtracs_cols._track_cols__metadata.get("ALT_ID")
+            ].iloc[0],
+            wind=storm[
+                constants.ibtracs_cols._track_cols__metadata.get("WIND")
+            ].to_numpy(),
+            pres=storm[
+                constants.ibtracs_cols._track_cols__metadata.get("PRES")
+            ].to_numpy(),
+            datadir_path="/work/FAC/FGSE/IDYST/tbeucler/default/raw_data/TCBench_alpha",
+            storm_season=storm.SEASON.iloc[0],
+            ai_model="panguweather",
+        )
+
+        times = pd.to_datetime(track.timestamps)
+        valid_times = times[np.isin(times.hour, [0, 6, 12, 18])]
+
+        start_date = valid_times[0]
+        end_date = valid_times[-1]
+
+        num_steps = (
+            (end_date - start_date).to_numpy() / np.timedelta64(6, "h")
+        ).astype(int)
+        leadtimes = np.arange(
+            -4 * 5 * 6,  # Start 5 days before
+            num_steps * 6,  # End at the number of steps * 6 hours
+            6,  # 6 hour intervals
+        ).astype("timedelta64[h]")
+        dates = start_date.to_numpy() + leadtimes
+
+        # Generate 6-hourly leadtimes between the start and end dates
+
+        # # Generate the leadtimes up to 5 days before with 6 hour intervals
+        # leadtimes = np.arange(-5 * 24, 0, 6).astype("timedelta64[h]")
+        # genesis_dates = start_date.to_numpy() + leadtimes
+        # genesis_dates = genesis_dates.astype("datetime64[ns]")
+
+        # valid_times = valid_times.to_numpy()
+
+        # valid_times = np.hstack([genesis_dates, valid_times])
+        # valid_times = np.unique(valid_times)
+
+        # # Check that the valid times are continuous
+        # assert np.all(
+        #     np.diff(valid_times).astype("timedelta64[h]") == np.timedelta64(6, "h")
+        # )
+
+        # print(valid_times.shape)
+
+        initial_times.append(dates)
+
+    unique_times = np.unique(np.concatenate(initial_times))
+    np.save(f"{results_dir}Initial_Times.npy", unique_times)
 
     # %% Abstract Image
 
-    track.ReAnal.load()
-    track.ai.load()
-    era5 = track.ReAnal.ds
-    pangu = track.ai.ds
+    # track.ReAnal.load()
+    # track.ai.load()
+    # era5 = track.ReAnal.ds
+    # pangu = track.ai.ds
 
-    era5["wind"] = (era5["10u"] ** 2 + era5["10v"] ** 2) ** 0.5
-    pangu["wind"] = (pangu["u10"] ** 2 + pangu["v10"] ** 2) ** 0.5
+    # era5["wind"] = (era5["10u"] ** 2 + era5["10v"] ** 2) ** 0.5
+    # pangu["wind"] = (pangu["u10"] ** 2 + pangu["v10"] ** 2) ** 0.5
 
-    forecast = pangu.sel(leadtime_hours=96)
+    # forecast = pangu.sel(leadtime_hours=96)
 
-    snapshot = forecast.isel(time=10).wind
+    # snapshot = forecast.isel(time=10).wind
 
-    target_time = snapshot.time.values + np.timedelta64(96, "h")
-    era5_snapshot = era5.wind.sel(time=target_time)
-    era5_IC = era5.sel(time=snapshot.time.values).wind
+    # target_time = snapshot.time.values + np.timedelta64(96, "h")
+    # era5_snapshot = era5.wind.sel(time=target_time)
+    # era5_IC = era5.sel(time=snapshot.time.values).wind
 
-    delta = snapshot - era5_snapshot
+    # delta = snapshot - era5_snapshot
 
-    cropped_snapshot = snapshot.where(delta.notnull(), drop=True)
-    delta = delta.where(delta.notnull(), drop=True)
-    era5_snapshot = era5_snapshot.where(delta.notnull(), drop=True)
-    era5_IC = era5_IC.where(era5_IC.notnull(), drop=True)
+    # cropped_snapshot = snapshot.where(delta.notnull(), drop=True)
+    # delta = delta.where(delta.notnull(), drop=True)
+    # era5_snapshot = era5_snapshot.where(delta.notnull(), drop=True)
+    # era5_IC = era5_IC.where(era5_IC.notnull(), drop=True)
 
-    print_time = pd.Timestamp(target_time).strftime("%Y-%m-%d %H:%M")
+    # print_time = pd.Timestamp(target_time).strftime("%Y-%m-%d %H:%M")
 
-    min_val = min(
-        cropped_snapshot.min().values,
-        era5_snapshot.min().values,
-        era5_IC.min().values,
-        # delta.min().values,
-    )
+    # min_val = min(
+    #     cropped_snapshot.min().values,
+    #     era5_snapshot.min().values,
+    #     era5_IC.min().values,
+    #     # delta.min().values,
+    # )
 
-    max_val = max(
-        cropped_snapshot.max().values,
-        era5_snapshot.max().values,
-        era5_IC.max().values,
-        # delta.max().values,
-    )
+    # max_val = max(
+    #     cropped_snapshot.max().values,
+    #     era5_snapshot.max().values,
+    #     era5_IC.max().values,
+    #     # delta.max().values,
+    # )
 
     # Select the non-nan areas
     # %%

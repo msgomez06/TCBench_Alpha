@@ -41,7 +41,7 @@ def transform_data(data, scaler):
 # %%
 if __name__ == "__main__":
     # emulate system arguments
-    emulate = True
+    emulate = False
     # Simulate command line arguments
     if emulate:
         sys.argv = [
@@ -229,6 +229,12 @@ if __name__ == "__main__":
         default=0.0,
     )
 
+    parser.add_argument(
+        "--tag",
+        type=str,
+        default="",
+    )
+
     args = parser.parse_args()
 
     print("Imports successful", flush=True)
@@ -383,7 +389,7 @@ if __name__ == "__main__":
     #  Dataloader & Hyperparameters
 
     # Let's define some hyperparameters
-    batch_size = 256
+    batch_size = 128
 
     # If the mode is not deterministic, we'll set the loss to CRPS
     if args.mode != "deterministic":
@@ -515,15 +521,17 @@ if __name__ == "__main__":
             # We then instantiate the DaskDataset class for the training and validation sets.
             # Validation first because it's smaller and will be used to evaluate if the code
             # is working as expected
+            val_idxs = idx_set[1]
+            train_idxs = idx_set[0]
             print("Creating validation DaskDataset and dataloader...", flush=True)
             validation_dataset = mlf.ZarrDatasetv2(
-                AI_X=valid_data[idx_set],
-                base_int=valid_base_intensity[idx_set],
-                target_data=valid_target[idx_set],
+                AI_X=valid_data[val_idxs],
+                base_int=valid_base_intensity[val_idxs],
+                target_data=valid_target[val_idxs],
                 device=calc_device,
                 num_workers=1,
-                track=valid_base_position[idx_set],
-                leadtimes=validation_leadtimes[idx_set],
+                track=valid_base_position[val_idxs],
+                leadtimes=validation_leadtimes[val_idxs],
             )
             validation_loader = mlf.make_dataloader(
                 validation_dataset,
@@ -532,18 +540,18 @@ if __name__ == "__main__":
                 num_workers=1,
                 # pin_memory=True,
             )
-            # %%
+
             print("Creating training DaskDataset and dataloader...", flush=True)
             train_dataset = mlf.ZarrDatasetv2(
-                AI_X=train_data[idx_set],
-                base_int=train_base_intensity[idx_set],
-                target_data=train_target[idx_set],
+                AI_X=train_data[train_idxs],
+                base_int=train_base_intensity[train_idxs],
+                target_data=train_target[train_idxs],
                 device=calc_device,
                 num_workers=1,
-                track=train_base_position[idx_set],
-                leadtimes=train_leadtimes[idx_set],
+                track=train_base_position[train_idxs],
+                leadtimes=train_leadtimes[train_idxs],
             )
-            # %%
+
             train_loader = mlf.make_dataloader(
                 train_dataset,
                 batch_size=batch_size,
@@ -720,7 +728,7 @@ if __name__ == "__main__":
                     CNN,
                     os.path.join(
                         result_dir,
-                        f"{str(CNN.tags[0])}_{start_time}_epoch-{epoch+1}_{CNN.savetag}.pt",
+                        f"{str(CNN.tags[0])}_{idx}_{start_time}_epoch-{epoch+1}_{CNN.savetag}{args.tag}.pt",
                     ),
                 )
 
@@ -759,7 +767,6 @@ if __name__ == "__main__":
             ) as f:
                 pickle.dump(losses, f)
 
-        # %%
         # plot the learning curves
         fig, ax = plt.subplots()
         ax.plot(

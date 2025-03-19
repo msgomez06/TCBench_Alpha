@@ -43,8 +43,8 @@ if __name__ == "__main__":
     if emulate:
         sys.argv = [
             "script_name",  # Traditionally the script name, but it's arbitrary in Jupyter
-            # "--ai_model",
-            # "fourcastnetv2",
+            "--ai_model",
+            "fourcastnetv2",
             "--overwrite_cache",
             # "--min_leadtime",
             # "6",
@@ -349,10 +349,10 @@ if __name__ == "__main__":
     print("Encoding base position...", flush=True)
     train_positions = mlf.latlon_to_sincos(
         data["train"]["base_position"][train_ldt_mask]
-    ).compute()
+    )
     valid_positions = mlf.latlon_to_sincos(
         data["validation"]["base_position"][validation_ldt_mask]
-    ).compute()
+    )
 
     # We'll encode the leadtime by dividing it by the max leadtime in the dataset
     # which is 168 hours
@@ -673,12 +673,12 @@ if __name__ == "__main__":
         data["validation"]["base_intensity"][validation_ldt_mask].rechunk(
             (1000, -1, -1)
         ).to_zarr(zarr_store, component="validation/base_intensity", overwrite=True)
-        data["train"]["base_position"][train_ldt_mask].rechunk((1000, -1)).to_zarr(
+        train_positions.rechunk((1000, -1)).to_zarr(
             zarr_store, component="train/base_position", overwrite=True
         )
-        data["validation"]["base_position"][validation_ldt_mask].rechunk(
-            (1000, -1)
-        ).to_zarr(zarr_store, component="validation/base_position", overwrite=True)
+        valid_positions.rechunk((1000, -1)).to_zarr(
+            zarr_store, component="validation/base_position", overwrite=True
+        )
 
     # Load the data from the zarr store
     train_base_intensity = da.from_zarr(zarr_store, component="train/base_intensity")

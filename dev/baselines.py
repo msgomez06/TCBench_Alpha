@@ -925,6 +925,11 @@ class RegularizedCNN(SimpleCNN):
         )
         x = x.view(-1, self.flat_size)
         x = F.dropout(F.hardswish(self.fc1(x)), p=self.dropout)
+
+        # make sure x has the right shape
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+
         scalars = F.dropout(F.hardswish(self.fc2(scalars)), p=self.dropout)
         scalars = torch.squeeze(
             F.dropout(F.hardswish(self.fc3(scalars)), p=self.dropout)
@@ -1053,6 +1058,14 @@ class UNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x, scalars):
+
+        # Handle single item batches
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+
+        if scalars.dim() == 1:
+            scalars = scalars.unsqueeze(0)
+
         # Encoder
         enc1 = F.dropout2d(self.enc1(x), p=self.dropout2d)
         x = self.pool(enc1)
@@ -1109,6 +1122,9 @@ class UNet(nn.Module):
         # Scalar processing
         scalars = F.relu(self.fc2(scalars))
         scalars = torch.squeeze(F.dropout(F.relu(self.fc3(scalars)), p=self.dropout))
+
+        if scalars.dim() == 1:
+            scalars = scalars.unsqueeze(0)
 
         # Concatenate and final FC layer
         x = torch.cat([x, scalars], dim=1)
@@ -1170,6 +1186,51 @@ class TorchMLRv2(nn.Module):
 
         # Concatenate the max and min values with the scalar inputs
         x = self.linear(x)
+        return x
+
+
+class ANN(nn.Module):
+    def __str__(self):
+        return "SimpleANN"
+
+    def __repr__(self):
+        return "SimpleANN"
+
+    def __init__(self, **kwargs):
+        super(ANN, self).__init__()
+
+        num_scalars = kwargs.get("num_scalars", 2)
+        unit_multiplier = kwargs.get("unit_multiplier", 4)
+
+        activation_function = kwargs.get("activation_function", nn.Hardswish)
+
+        self.layers = nn.Sequential(
+            nn.Linear(num_scalars, num_scalars * unit_multiplier),
+            activation_function(),
+            nn.Linear(num_scalars * unit_multiplier, num_scalars * unit_multiplier),
+            activation_function(),
+            nn.Linear(num_scalars * unit_multiplier, num_scalars * unit_multiplier),
+            activation_function(),
+            nn.Linear(num_scalars * unit_multiplier, num_scalars * unit_multiplier),
+            activation_function(),
+            nn.Linear(num_scalars * unit_multiplier, num_scalars * unit_multiplier),
+            activation_function(),
+            nn.Linear(num_scalars * unit_multiplier, num_scalars * unit_multiplier),
+            activation_function(),
+            nn.Linear(
+                num_scalars * unit_multiplier,
+                2 if kwargs.get("deterministic", False) else 4,
+            ),
+        )
+
+    def forward(self, x):
+        # Find the maximum and min values across the x channels
+        x = torch.squeeze(x)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+
+        # Forward pass
+        x = self.layers(x)
         return x
 
 

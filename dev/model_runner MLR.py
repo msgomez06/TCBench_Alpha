@@ -46,8 +46,8 @@ if __name__ == "__main__":
     if emulate:
         sys.argv = [
             "script_name",  # Traditionally the script name, but it's arbitrary in Jupyter
-            # "--ai_model",
-            # "fourcastnetv2",
+            "--ai_model",
+            "fourcastnetv2",
             # "--overwrite_cache",
             # "--min_leadtime",
             # "6",
@@ -56,12 +56,12 @@ if __name__ == "__main__":
             # "--use_gpu",
             # "--verbose",
             # "--reanalysis",
-            # "--mode",
-            # "probabilistic",
+            "--mode",
+            "probabilistic",
             "--cache_dir",
             "/scratch/mgomezd1/cache",
             # "/srv/scratch/mgomezd1/cache",
-            # "--mask",
+            "--mask",
             "--magAngle_mode",
             "--dask_array",
         ]
@@ -232,6 +232,8 @@ if __name__ == "__main__":
         calc_device = torch.device("cpu")
 
     num_cores = int(subprocess.check_output(["nproc"], text=True).strip())
+
+    mask_flag = "masked" if args.mask else "unmasked"
 
     # %%
     # Check if the cache directory includes a zarray store for the data
@@ -417,9 +419,14 @@ if __name__ == "__main__":
     #     input("Press Enter to continue...")
     #  Model
     # We begin by instantiating our baseline model
-    MLR = baselines.TorchMLRv2(
+    # MLR = baselines.TorchMLRv2(
+    #     deterministic=True if args.mode == "deterministic" else False,
+    #     num_scalars=train_x.shape[1],
+    # )
+    MLR = baselines.ANN(
         deterministic=True if args.mode == "deterministic" else False,
         num_scalars=train_x.shape[1],
+        activation_function=torch.nn.LeakyReLU,
     )
     MLR.to(calc_device)
 
@@ -428,7 +435,7 @@ if __name__ == "__main__":
     #     optimizer, base_lr=1e-5, max_lr=1e-3, step_size_up=10
     # )
 
-    num_epochs = 40
+    num_epochs = 20
     patience = 3  # stop if validation loss increases for patience epochs
     bias_threshold = 10  # stop if validation loss / train loss > bias_threshold
 
@@ -623,7 +630,7 @@ if __name__ == "__main__":
                 MLR,
                 os.path.join(
                     result_dir,
-                    f"best_model_{str(MLR)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}.pt",
+                    f"{str(MLR)}_{start_time}_epoch-{epoch+1}_{args.ai_model}_{args.mode}_{mask_flag}.pt",
                 ),
             )
 
@@ -655,7 +662,7 @@ if __name__ == "__main__":
         with open(
             os.path.join(
                 result_dir,
-                f"MLR_{str(MLR)}_losses_{start_time}_{args.ai_model}_{args.mode}.pkl",
+                f"{str(MLR)}_losses_{start_time}_{args.ai_model}_{args.mode}_{mask_flag}.pkl",
             ),
             "wb",
         ) as f:
@@ -685,7 +692,8 @@ if __name__ == "__main__":
         toolbox.plot_facecolors(fig=fig, axes=ax)
         fig.savefig(
             os.path.join(
-                result_dir, f"MLR_{str(MLR)}_{args.ai_model}_losses_{start_time}.png"
+                result_dir,
+                f"{str(MLR)}_{args.ai_model}_losses_{start_time}_{mask_flag}.png",
             )
         )
         plt.close(fig)
